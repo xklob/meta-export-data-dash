@@ -1,0 +1,19 @@
+{
+  "name": "Fixture Album",
+  "photos": [
+    {
+      "uri": "your_facebook_activity/posts/media/example.jpg",
+      "creation_timestamp": 1700000600,
+      "title": "Fixture photo",
+      "description": "Synthetic photo description"
+    }
+  ],
+  "cover_photo": {
+    "uri": "your_facebook_activity/posts/media/example.jpg",
+    "creation_timestamp": 1700000601,
+    "title": "Fixture cover",
+    "description": "Synthetic cover description"
+  },
+  "last_modified_timestamp": 1700000602,
+  "description": "Synthetic album description"
+}

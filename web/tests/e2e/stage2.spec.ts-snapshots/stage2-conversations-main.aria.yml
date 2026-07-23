@@ -1,0 +1,198 @@
+- main:
+  - paragraph: Message archive
+  - heading "Conversations" [level=1]
+  - paragraph: Browse direct, group, and system histories without loading the full archive into the browser. Counts distinguish attachment occurrences from unique files.
+  - link "Browse all media":
+    - /url: /media
+  - region "Loaded conversation totals":
+    - article:
+      - paragraph: Matching conversations
+      - strong: "4"
+      - text: 4 loaded
+    - article:
+      - paragraph: Messages in loaded rows
+      - strong: /\d+/
+      - text: Sent and received combined
+    - article:
+      - paragraph: File occurrences loaded
+      - strong: /\d+/
+      - text: Duplicates counted separately
+    - article:
+      - paragraph: Participant slots loaded
+      - strong: /\d+/
+      - text: Includes you in each thread
+  - form "Conversation filters":
+    - strong: Filter and sort
+    - text: All filtering runs against the local catalog. Open a saved view
+    - combobox "Open a saved view":
+      - option "Saved views (0)" [selected]
+    - button "Save view"
+    - text: Conversation title
+    - searchbox "Conversation title"
+    - text: Type
+    - combobox "Type":
+      - option "All types" [selected]
+      - option "Direct"
+      - option "Group"
+      - option "System"
+      - option "Unknown"
+    - text: Completeness
+    - combobox "Completeness":
+      - option "Any coverage" [selected]
+      - option "Complete"
+      - option "Incomplete"
+    - text: Source category
+    - textbox "Source category":
+      - /placeholder: e.g. archived_threads
+    - text: Minimum people
+    - spinbutton "Minimum people"
+    - text: Maximum people
+    - spinbutton "Maximum people"
+    - text: Minimum messages
+    - spinbutton "Minimum messages"
+    - text: Maximum messages
+    - spinbutton "Maximum messages"
+    - text: Active after
+    - textbox "Active after"
+    - text: Active before
+    - textbox "Active before"
+    - text: Attachments
+    - combobox "Attachments":
+      - option "With or without" [selected]
+      - option "Has attachments"
+      - option "No attachments"
+    - text: Minimum photos
+    - spinbutton "Minimum photos"
+    - text: Maximum photos
+    - spinbutton "Maximum photos"
+    - text: Minimum videos
+    - spinbutton "Minimum videos"
+    - text: Maximum videos
+    - spinbutton "Maximum videos"
+    - text: Minimum audio files
+    - spinbutton "Minimum audio files"
+    - text: Maximum audio files
+    - spinbutton "Maximum audio files"
+    - text: Sort by
+    - combobox "Sort by":
+      - option "Last activity" [selected]
+      - option "First activity"
+      - option "Title"
+      - option "Conversation type"
+      - option "Source category"
+      - option "Participants"
+      - option "Total messages"
+      - option "Messages sent"
+      - option "Messages received"
+      - option "Attachment occurrences"
+      - option "Unique files"
+      - option "Photos"
+      - option "Videos"
+      - option "Audio files"
+      - option "Attachment bytes"
+      - option "Active days"
+      - option "Completeness"
+    - text: Direction
+    - combobox "Direction":
+      - option "Descending" [selected]
+      - option "Ascending"
+    - text: Dates use America/New_York
+    - button "Reset"
+    - button "Apply filters"
+  - region "Conversation ledger":
+    - heading "Conversation ledger" [level=2]
+    - paragraph: 4 loaded · 4 matching
+    - table "Conversations":
+      - row "Sort by Conversation Sort by Type Sort by People Sort by Activity Sort by Messages Sent / received Sort by Files / media Sort by Size Sort by Coverage":
+        - columnheader "Sort by Conversation":
+          - button "Sort by Conversation"
+        - columnheader "Sort by Type":
+          - button "Sort by Type"
+        - columnheader "Sort by People":
+          - button "Sort by People"
+        - columnheader "Sort by Activity":
+          - button "Sort by Activity"
+        - columnheader "Sort by Messages":
+          - button "Sort by Messages"
+        - columnheader "Sent / received"
+        - columnheader "Sort by Files / media":
+          - button "Sort by Files / media"
+        - columnheader "Sort by Size":
+          - button "Sort by Size"
+        - columnheader "Sort by Coverage":
+          - button "Sort by Coverage"
+      - rowgroup:
+        - row /Alex Example Archived Threads · E2ee Cutover Direct 2 Jan 1, \d+ Jan 1, \d+ first · \d+ active days \d+ \d+ \/ \d+ 6 \/ 5 2 photos, 1 videos, 1 audio files \d+\.\d+ MiB Complete/:
+          - cell "Alex Example Archived Threads · E2ee Cutover":
+            - link "Alex Example":
+              - /url: /conversations/conv-alex
+            - text: ""
+          - cell "Direct"
+          - cell "2"
+          - cell /Jan 1, \d+ Jan 1, \d+ first · \d+ active days/:
+            - strong: /Jan 1, \d+/
+            - text: ""
+          - cell /\d+/
+          - cell /\d+ \/ \d+/:
+            - strong: /\d+ \/ \d+/
+          - cell "6 / 5 2 photos, 1 videos, 1 audio files":
+            - strong: 6 / 5
+            - text: ""
+          - cell /\d+\.\d+ MiB/
+          - cell "Complete"
+        - row /Family Plans Inbox Group 8 Jan 1, \d+ Dec \d+, \d+ first · \d+ active days \d+ \d+ \/ \d+ 4 \/ 4 2 photos, 1 videos, 1 audio files \d+\.\d+ MiB Incomplete/:
+          - cell "Family Plans Inbox":
+            - link "Family Plans":
+              - /url: /conversations/conv-family
+            - text: ""
+          - cell "Group"
+          - cell "8"
+          - cell /Jan 1, \d+ Dec \d+, \d+ first · \d+ active days/:
+            - strong: /Jan 1, \d+/
+            - text: ""
+          - cell /\d+/
+          - cell /\d+ \/ \d+/:
+            - strong: /\d+ \/ \d+/
+          - cell "4 / 4 2 photos, 1 videos, 1 audio files":
+            - strong: 4 / 4
+            - text: ""
+          - cell /\d+\.\d+ MiB/
+          - cell "Incomplete"
+        - row /Marketplace notifications Marketplace System 1 Nov \d+, \d+ Nov \d+, \d+ first · \d+ active days 8 0 \/ 8 0 \/ 0 0 photos, 0 videos, 0 audio files 0 B Complete/:
+          - cell "Marketplace notifications Marketplace":
+            - link "Marketplace notifications":
+              - /url: /conversations/conv-system
+            - text: ""
+          - cell "System"
+          - cell "1"
+          - cell /Nov \d+, \d+ Nov \d+, \d+ first · \d+ active days/:
+            - strong: /Nov \d+, \d+/
+            - text: ""
+          - cell "8"
+          - cell "0 / 8":
+            - strong: 0 / 8
+          - cell "0 / 0 0 photos, 0 videos, 0 audio files":
+            - strong: 0 / 0
+            - text: ""
+          - cell "0 B"
+          - cell "Complete"
+        - row /Media Only Contact Archived Threads Media-only thread · no message records Direct 2 Unknown date Unknown date first · 0 active days 0 0 \/ 0 1 \/ 1 1 photos, 0 videos, 0 audio files \d+\.\d+ KiB Complete/:
+          - cell "Media Only Contact Archived Threads Media-only thread · no message records":
+            - link "Media Only Contact":
+              - /url: /conversations/conv-media-only
+            - text: ""
+            - strong: Media-only thread · no message records
+          - cell "Direct"
+          - cell "2"
+          - cell "Unknown date Unknown date first · 0 active days":
+            - strong: Unknown date
+            - text: ""
+          - cell "0"
+          - cell "0 / 0":
+            - strong: 0 / 0
+          - cell "1 / 1 1 photos, 0 videos, 0 audio files":
+            - strong: 1 / 1
+            - text: ""
+          - cell /\d+\.\d+ KiB/
+          - cell "Complete"
+    - text: 4 of 4 conversations loaded End of results

@@ -1,0 +1,20 @@
+{
+  "participants": [
+    {
+      "name": "Archive User"
+    },
+    {
+      "name": "Synthetic Contact"
+    }
+  ],
+  "messages": [
+    {
+      "sender_name": "Archive User",
+      "timestamp_ms": 1700000000000,
+      "content": "This belongs to the message importer"
+    }
+  ],
+  "title": "Synthetic Contact",
+  "is_still_participant": true,
+  "thread_path": "inbox/fixture_thread"
+}

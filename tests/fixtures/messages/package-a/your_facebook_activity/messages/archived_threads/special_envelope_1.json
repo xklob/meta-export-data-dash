@@ -1,0 +1,20 @@
+{
+  "title": "Special Envelope",
+  "participants": [
+    {"name": "Archive Owner"},
+    {"name": "Special Example"}
+  ],
+  "messages": [
+    {
+      "sender_name": "Special Example",
+      "timestamp_ms": 5000000,
+      "content": "Structurally discovered outside a thread directory",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    }
+  ],
+  "thread_path": "archived_threads/special_envelope",
+  "is_still_participant": false,
+  "magic_words": [],
+  "joinable_mode": {"link": "", "mode": 0}
+}

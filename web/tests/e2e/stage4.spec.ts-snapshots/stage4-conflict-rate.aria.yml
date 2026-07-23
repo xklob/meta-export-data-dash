@@ -1,0 +1,30 @@
+- heading "Estimated direct-conflict-window rate" [level=2]
+- paragraph: Time-only, calibration-gated classifications across the complete active message-window corpus. This never ranks people, conversations, or relationships.
+- text: Ready
+- group "Conflict rate filters":
+  - text: Conflict time bucket
+  - combobox "Conflict time bucket":
+    - option "Hour"
+    - option "Day"
+    - option "Week"
+    - option "Month" [selected]
+    - option "Year"
+  - text: From
+  - textbox "From"
+  - text: Through
+  - textbox "Through"
+- region "Conflict aggregate summary":
+  - article:
+    - paragraph: Classified windows
+    - strong: /\d+/
+    - text: Overlapping text windows in the selected period
+  - article:
+    - paragraph: Estimated direct-conflict rate
+    - strong: /\d+\.\d+%/
+    - text: /\d+ top-labelled windows/
+- img "Model-estimated direct-conflict-window rate by month":
+  - paragraph: /\d+ classified windows across 1 observed time buckets; bars show sample sizes\./
+- group: Inspect conflict-rate samples
+- paragraph: "Rollup provenance: whole UTC hours overlapping the requested interval."
+- list:
+  - listitem: Model estimate; no people, conversations, or relationships are ranked.

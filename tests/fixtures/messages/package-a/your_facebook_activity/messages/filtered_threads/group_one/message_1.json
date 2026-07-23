@@ -1,0 +1,21 @@
+{
+  "title": "Shared Group Title",
+  "participants": [
+    {"name": "Archive Owner"},
+    {"name": "Repeated Label"},
+    {"name": "Repeated Label"}
+  ],
+  "messages": [
+    {
+      "sender_name": "Repeated Label",
+      "timestamp_ms": 6000000,
+      "content": "First group",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false,
+      "transcription": {"text": "Transcribed fixture"}
+    }
+  ],
+  "thread_path": "filtered_threads/group_one",
+  "is_still_participant": true,
+  "magic_words": []
+}

@@ -1,0 +1,20 @@
+{
+  "title": "Leading Gap",
+  "participants": [
+    {"name": "Archive Owner"},
+    {"name": "Gap Example"}
+  ],
+  "messages": [
+    {
+      "sender_name": "Gap Example",
+      "timestamp_ms": 8000000,
+      "content": "message_1 is absent",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false,
+      "share": {"link": "https://example.invalid/fixture"}
+    }
+  ],
+  "thread_path": "inbox/leading_gap",
+  "is_still_participant": false,
+  "magic_words": []
+}

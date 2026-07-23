@@ -1,0 +1,51 @@
+[
+  {
+    "title": "Fixture own-wall post",
+    "timestamp": 1700210000,
+    "post_context": "own_wall",
+    "label_values": [],
+    "fbid": "post-own-wall"
+  },
+  {
+    "title": "Fixture post on another wall",
+    "timestamp": 1700220000,
+    "post_context": "others_wall",
+    "label_values": [],
+    "fbid": "post-others-wall"
+  },
+  {
+    "title": "Fixture group post",
+    "timestamp": 1700230000,
+    "post_context": "group",
+    "label_values": [],
+    "fbid": "post-group"
+  },
+  {
+    "title": "Fixture reshared post",
+    "timestamp": 1700240000,
+    "post_context": "reshared",
+    "label_values": [],
+    "fbid": "post-reshared"
+  },
+  {
+    "title": "Fixture tagged post",
+    "timestamp": 1700250000,
+    "post_context": "tagged",
+    "label_values": [],
+    "fbid": "post-tagged"
+  },
+  {
+    "title": "Fixture post by another person on your wall",
+    "timestamp": 1700260000,
+    "post_context": "others_on_your_wall",
+    "label_values": [],
+    "fbid": "post-others-on-your-wall"
+  },
+  {
+    "title": "Fixture explicitly unfamiliar post context",
+    "timestamp": 1700270000,
+    "post_context": "future_meta_surface",
+    "label_values": [],
+    "fbid": "post-unknown"
+  }
+]

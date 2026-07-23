@@ -1,0 +1,102 @@
+- main:
+  - paragraph: Activity archive
+  - heading "Posts, comments & Facebook activity" [level=1]
+  - paragraph: Browse every activity record that this export actually contains, with source coverage kept visible.
+  - navigation "Activity category":
+    - button "All activity" [pressed]
+    - button "Posts"
+    - button "Comments"
+    - button "Groups"
+    - button "Marketplace"
+    - button "Pages"
+    - button "Check-ins"
+    - button "Support"
+  - strong: Filter this activity
+  - text: Dates are interpreted in America/New_York.
+  - button "Reset"
+  - text: Search title, text, or actor
+  - textbox "Search title, text, or actor":
+    - /placeholder: Search exported activity
+  - text: From
+  - textbox "From"
+  - text: Post/comment context
+  - combobox "Post/comment context":
+    - option "Every explicit context" [selected]
+    - option "Your own wall"
+    - option "Someone else's wall"
+    - option "Group"
+    - option "Reshared"
+    - option "Tagged"
+    - option "Others on your wall"
+    - option "Unknown / not explicit"
+  - text: Through
+  - textbox "Through"
+  - text: Availability
+  - combobox "Availability":
+    - option "Any status" [selected]
+    - option "Available"
+    - option "Unavailable body"
+  - text: Attachments
+  - combobox "Attachments":
+    - option "Either" [selected]
+    - option "Has files"
+    - option "No files"
+  - text: Sort
+  - combobox "Sort":
+    - option "Date" [selected]
+    - option "Title"
+    - option "Actor"
+    - option "Category"
+    - option "Subtype"
+  - text: Direction
+  - combobox "Direction":
+    - option "Newest / Z–A" [selected]
+    - option "Oldest / A–Z"
+  - text: Unknown dates remain unknown and sort after dated records.
+  - button "Apply filters"
+  - complementary "Source coverage":
+    - strong: Posts and albums
+    - text: Partial 2 records
+    - paragraph: Only exported post-related records are shown.
+  - region "All activity":
+    - heading "All activity" [level=2]
+    - paragraph: 2 matching source records
+    - text: Date
+    - paragraph: Scroll inside the framed pane to browse all loaded activity records. Controls below load or move to another batch.
+    - region "Scrollable virtualized activity results":
+      - table:
+        - rowgroup:
+          - row "Activity Category Post context Actor Date Files Source Jump":
+            - columnheader "Activity"
+            - columnheader "Category"
+            - columnheader "Post context"
+            - columnheader "Actor"
+            - columnheader "Date"
+            - columnheader "Files"
+            - columnheader "Source"
+            - columnheader "Jump"
+        - rowgroup:
+          - row /Fixture album photo A retained caption Available Posts Album Photo Group Source subtype classification Archive User Nov \d+, \d+, 5:\d+ PM 1 file your_facebook_activity\/posts\/album\.json Open source record/:
+            - cell "Fixture album photo A retained caption Available":
+              - strong: Fixture album photo
+              - text: ""
+            - cell "Posts Album Photo":
+              - strong: Posts
+              - text: ""
+            - cell "Group Source subtype classification":
+              - strong: Group
+              - text: ""
+            - cell "Archive User"
+            - cell /Nov \d+, \d+, 5:\d+ PM/
+            - cell "1 file"
+            - cell "your_facebook_activity/posts/album.json"
+            - cell "Open source record":
+              - link "Open source record":
+                - /url: /timeline?around=activity:activity-one#activity-activity-one
+                - text: ""
+    - navigation "Activity results pages":
+      - strong: Page 1
+      - text: 1 shown · 2 total
+      - button "Previous page" [disabled]
+      - button "Next page" [disabled]
+    - status

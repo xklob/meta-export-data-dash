@@ -1,0 +1,62 @@
+- main:
+  - paragraph: Resumable operations
+  - heading "Jobs" [level=1]
+  - paragraph: Track scan, hash, consolidation, import, and verification work. Progress is checkpointed so safe restarts do not discard completed work.
+  - button "Refresh"
+  - region "Job summary":
+    - strong: "1"
+    - text: Active
+    - strong: "1"
+    - text: Completed
+    - strong: "0"
+    - text: Stopped
+    - strong: "2"
+    - text: Total jobs
+  - region "Operation history":
+    - heading "Operation history" [level=2]
+    - paragraph: 2 shown · 2 matching
+    - text: Search jobs
+    - searchbox "Search jobs"
+    - group "Filter jobs by status":
+      - button "All" [pressed]
+      - button "Running"
+      - button "Complete"
+      - button "Failed"
+    - article:
+      - heading "Archive Inventory" [level=3]
+      - text: Running
+      - paragraph: Hashing source files
+      - code: job-inventor
+      - progressbar "Archive Inventory progress"
+      - text: /\d+%/
+      - term: Started
+      - definition: /Jul \d+, \d+, 6:\d+ AM/
+      - term: Finished
+      - definition: Still running
+      - term: Duration
+      - definition: /\d+[hmsp]+ [\d,.]+[bkmBKM]+/
+      - term: Progress
+      - definition: /\d+ \/ \d+/
+      - group "Job counters":
+        - strong: /\d+/
+        - text: Files Hashed
+        - strong: "3"
+        - text: Duplicate Groups
+    - article:
+      - heading "Doctor" [level=3]
+      - text: Complete
+      - paragraph: Environment verified
+      - code: job-doctor-0
+      - progressbar "Doctor progress"
+      - text: /\d+%/
+      - term: Started
+      - definition: /Jul \d+, \d+, 5:\d+ AM/
+      - term: Finished
+      - definition: /Jul \d+, \d+, 5:\d+ AM/
+      - term: Duration
+      - definition: /\d+[hmsp]+/
+      - term: Progress
+      - definition: 8 / 8
+      - group "Job counters":
+        - strong: "8"
+        - text: Checks Passed

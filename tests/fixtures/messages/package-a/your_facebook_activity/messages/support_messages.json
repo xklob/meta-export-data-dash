@@ -1,0 +1,43 @@
+{
+  "support_messages": {
+    "case/one~alpha": {
+      "subject": "Support Case One",
+      "timestamp": 8000,
+      "messages": [
+        {
+          "from": "Meta Support",
+          "to": "Archive Owner",
+          "message": "Newest support reply",
+          "timestamp": 8000,
+          "subject": "Support Case One",
+          "attachments": [
+            {
+              "uri": "your_facebook_activity/messages/support/fixture.txt",
+              "creation_timestamp": 8000,
+              "caption": "preserved"
+            }
+          ]
+        },
+        {
+          "from": "Archive Owner",
+          "to": "Meta Support",
+          "message": "Older support request",
+          "timestamp": 7000,
+          "subject": "Support Case One"
+        }
+      ]
+    },
+    "case-two": {
+      "subject": "Support Case Two",
+      "timestamp": 9000,
+      "messages": [
+        {
+          "from": "Archive Owner",
+          "to": "Meta Support",
+          "message": "Independent support thread",
+          "timestamp": 9000
+        }
+      ]
+    }
+  }
+}

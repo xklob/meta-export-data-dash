@@ -1,0 +1,50 @@
+- main:
+  - paragraph: Verification ledger
+  - heading "Integrity" [level=1]
+  - paragraph: Every gap stays visible. Reconciliation checks compare the normalized catalog with source facts before consolidation can be accepted.
+  - region "Integrity totals":
+    - article:
+      - paragraph: Total findings
+      - strong: "3"
+      - text: 2 unresolved
+    - article:
+      - paragraph: Critical
+      - strong: "0"
+      - text: Requires attention before promotion
+    - article:
+      - paragraph: Warnings
+      - strong: "2"
+      - text: Preserved with provenance
+    - article:
+      - paragraph: Informational
+      - strong: "1"
+      - text: 1 of 2 checks passing
+  - region "Reconciliation checks":
+    - heading "Reconciliation checks" [level=2]
+    - paragraph: Expected archive facts compared with the current catalog.
+    - text: 1/2 passing
+    - group: Review all 2 detailed checks 1 need attention or remain pending
+  - region "Findings ledger":
+    - heading "Findings ledger" [level=2]
+    - paragraph: 2 shown · 2 matching
+    - text: Search integrity findings
+    - searchbox "Search integrity findings"
+    - checkbox "Show resolved"
+    - text: Show resolved
+    - group "Filter findings by severity":
+      - button "All" [pressed]
+      - button "Critical"
+      - button "Warning"
+      - button "Info"
+    - article:
+      - code: MESSAGE_SEGMENT_LEADING_GAP
+      - text: Warning
+      - time: /Jul \d+, \d+, 6:\d+ AM/
+      - heading "Five message threads begin after segment one." [level=3]
+      - paragraph: The missing segment is recorded as source incompleteness.
+    - article:
+      - code: ATTACHMENT_MISSING
+      - text: Warning
+      - time: /Jul \d+, \d+, 6:\d+ AM/
+      - heading "Some local attachment references cannot be resolved." [level=3]
+      - paragraph: Placeholders and source jump anchors will be retained.

@@ -1,0 +1,22 @@
+{
+  "title": "Shared Group Title",
+  "participants": [
+    {"name": "Archive Owner"},
+    {"name": "Group Member One"},
+    {"name": "Group Member Two"}
+  ],
+  "messages": [
+    {
+      "sender_name": "Group Member One",
+      "timestamp_ms": 7000000,
+      "content": "Second group",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false,
+      "call_duration": 12,
+      "missed": false
+    }
+  ],
+  "thread_path": "filtered_threads/group_two",
+  "is_still_participant": true,
+  "magic_words": []
+}

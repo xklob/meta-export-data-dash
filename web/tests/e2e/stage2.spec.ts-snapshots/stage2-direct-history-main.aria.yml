@@ -1,0 +1,93 @@
+- navigation "Breadcrumb":
+  - link "All conversations":
+    - /url: /conversations
+  - text: / Alex Example
+- paragraph: Direct conversation
+- heading "Alex Example" [level=1]
+- paragraph: Archived Threads · E2ee Cutover
+- text: Provisional
+- term: Messages
+- definition: /\d+/
+- term: Sent / received
+- definition: /\d+ \/ \d+/
+- term: People
+- definition: "2"
+- term: Files
+- definition: "6"
+- term: Date range
+- definition: /Jan 1, \d+ – Jan 1, \d+/
+- term: Coverage
+- definition: Complete
+- button "Beginning"
+- button "Latest"
+- text: Jump to date
+- textbox "Jump to date"
+- button "Jump" [disabled]
+- link "Conversation media":
+  - /url: /media?conversation=conv-alex
+- button "Search this conversation"
+- group: Source segments 2
+- group:
+  - text: Direct-history identity Provisional
+  - note:
+    - paragraph:
+      - strong: This history is provisional.
+      - text: Facebook supplied names, not stable person IDs. Merge and split only change which source segments are browsed together; thread paths, messages, and source coordinates stay unchanged.
+  - group "Identity correction type":
+    - button "Split segments" [pressed]
+    - button "Merge history"
+  - group "Move selected source segments into a new direct history":
+    - text: ""
+    - paragraph: Select at least one segment and leave at least one here. The source data itself is not edited.
+    - checkbox "Alex Example Archived Threads · archived_threads/alex_example"
+    - strong: Alex Example
+    - text: Archived Threads · archived_threads/alex_example
+    - checkbox "Alex Example E2ee Cutover · e2ee_cutover/alex_example_new"
+    - strong: Alex Example
+    - text: E2ee Cutover · e2ee_cutover/alex_example_new New history title
+    - textbox "New history title":
+      - /placeholder: Display name for the separated history
+    - text: Reason (optional, saved to audit)
+    - textbox "Reason (optional, saved to audit)"
+    - button "Split selected segments" [disabled]
+  - region "Correction history":
+    - heading "Correction history" [level=3]
+    - paragraph: Every apply and revert remains in the local audit ledger.
+    - paragraph: No manual corrections involve this history yet.
+- region "Message history":
+  - heading "Message history" [level=2]
+  - paragraph: Chronological · virtualized to keep the rendered page bounded
+  - text: /\d+ loaded/
+  - button "Load older now"
+  - text: /\d+ cached of \d+ · scroll to either edge to continue/
+  - feed "Conversation messages":
+    - article /Message from Archive Owner on Apr \d+, \d+, 3:\d+ AM/:
+      - strong: Archive Owner
+      - text: You
+      - time: /Apr \d+, \d+, 3:\d+ AM/
+      - text: Generic
+      - paragraph: /Fixture message \d+/
+    - article /Message from Alex Example on Apr \d+, \d+, 3:\d+ AM/:
+      - strong: Alex Example
+      - time: /Apr \d+, \d+, 3:\d+ AM/
+      - text: Generic
+      - paragraph: /Fixture message \d+/
+    - article /Message from Archive Owner on Apr \d+, \d+, 3:\d+ AM/:
+      - strong: Archive Owner
+      - text: You
+      - time: /Apr \d+, \d+, 3:\d+ AM/
+      - text: Generic
+      - paragraph: /Fixture message \d+/
+    - article /Message from Alex Example on Apr \d+, \d+, 3:\d+ AM/:
+      - strong: Alex Example
+      - time: /Apr \d+, \d+, 3:\d+ AM/
+      - text: Generic
+      - paragraph: /Fixture message \d+/
+    - article /Message from Archive Owner on Apr \d+, \d+, 3:\d+ AM/:
+      - strong: Archive Owner
+      - text: You
+      - time: /Apr \d+, \d+, 3:\d+ AM/
+      - text: Generic
+      - paragraph: /Fixture message \d+/
+  - button "Load newer now"
+- paragraph: Sensitive IP and payment metadata is hidden by default and fetched only after an explicit reveal.

@@ -1,0 +1,60 @@
+- main:
+  - paragraph: Source truth
+  - heading "Data coverage" [level=1]
+  - paragraph: See what this export can support before drawing conclusions. Unavailable means the category was not included—not that the history was empty.
+  - region "Coverage summary":
+    - strong: "1"
+    - text: Available
+    - strong: "1"
+    - text: Partial
+    - strong: "1"
+    - text: Unavailable
+    - paragraph: Counts reflect source records and normalized logical records separately.
+  - region "Facebook categories":
+    - heading "Facebook categories" [level=2]
+    - paragraph: 3 of 3 categories shown
+    - text: Search coverage categories
+    - searchbox "Search coverage categories"
+    - group "Filter by coverage status":
+      - button "All categories" [pressed]
+      - button "Available"
+      - button "Partial"
+      - button "Unavailable"
+    - region "Coverage categories table":
+      - table:
+        - rowgroup:
+          - row "Category Coverage Raw records Logical records Last checked":
+            - columnheader "Category":
+              - button "Category"
+            - columnheader "Coverage":
+              - button "Coverage"
+            - columnheader "Raw records":
+              - button "Raw records"
+            - columnheader "Logical records":
+              - button "Logical records"
+            - columnheader "Last checked"
+        - rowgroup:
+          - row /Messages Direct, group, support, and marketplace threads were found\. Available \d+ \d+ Jul \d+, \d+, 6:\d+ AM/:
+            - cell "Messages Direct, group, support, and marketplace threads were found.":
+              - strong: Messages
+              - text: ""
+            - cell "Available"
+            - cell /\d+/
+            - cell /\d+/
+            - cell /Jul \d+, \d+, 6:\d+ AM/
+          - row /Posts & comments Group comments, reactions, check-ins, and one album are present\. Partial \d+ \d+ Jul \d+, \d+, 6:\d+ AM/:
+            - cell "Posts & comments Group comments, reactions, check-ins, and one album are present.":
+              - strong: Posts & comments
+              - text: ""
+            - cell "Partial"
+            - cell /\d+/
+            - cell /\d+/
+            - cell /Jul \d+, \d+, 6:\d+ AM/
+          - row /Friends The directory exists but contains no source files\. Unavailable — — Jul \d+, \d+, 6:\d+ AM/:
+            - cell "Friends The directory exists but contains no source files.":
+              - strong: Friends
+              - text: ""
+            - cell "Unavailable"
+            - cell "—"
+            - cell "—"
+            - cell /Jul \d+, \d+, 6:\d+ AM/

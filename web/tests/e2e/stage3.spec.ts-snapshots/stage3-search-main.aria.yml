@@ -1,0 +1,67 @@
+- paragraph: Stage 3 · Local retrieval
+- heading "Search the archive" [level=1]
+- paragraph: Search messages, conversation windows, audio transcripts, comments, and other indexed activity by literal text or meaning. Every result stays tied to a source jump.
+- region "Semantic index":
+  - heading "Semantic index" [level=2]
+  - text: Ready
+  - paragraph: /fixture\/embedding · \d+ searchable windows/
+- group "Search method":
+  - text: ""
+  - radio "Keyword FTS phrase and prefix matching"
+  - strong: Keyword
+  - text: FTS phrase and prefix matching
+  - radio "Exact literal Case-sensitive text substring"
+  - strong: Exact literal
+  - text: Case-sensitive text substring
+  - radio "Semantic Meaning-based conversation windows" [checked]
+  - strong: Semantic
+  - text: Meaning-based conversation windows
+  - radio "Hybrid Keyword and semantic ranks combined"
+  - strong: Hybrid
+  - text: Keyword and semantic ranks combined
+- text: What do you want to find?
+- textbox "What do you want to find? Search archive":
+  - /placeholder: e.g. a tense argument about plans
+  - text: argument
+- button "Search archive"
+- group: Scope and date filters
+- region "Saved searches":
+  - heading "Saved searches" [level=2]
+  - paragraph: Keep a repeatable query and its complete filter scope.
+  - textbox "Saved search name":
+    - /placeholder: Name this search
+  - button "Save" [disabled]
+  - paragraph: No saved searches yet.
+- group "Retrieval evaluation set":
+  - text: Advanced review
+  - strong: Retrieval evaluation set
+  - text: Edit or delete saved relevance judgements without crowding the primary search workflow. Open ledger
+- region "Search results":
+  - heading "Search results" [level=2]
+  - paragraph: 1 ranked candidates for “argument”
+  - text: /Semantic · capped at \d+,\d+/
+  - article:
+    - text: Result rank 1
+    - heading "Alex Example" [level=3]
+    - paragraph: Message Window · Inbox
+    - text: "/Cosine Similarity \\d+\\.\\d+ Coverage: Complete Record confidence: not applicable/"
+    - time: /Jan 1, \d+, 7:\d+ PM/
+    - paragraph: "Alex: This keeps happening. Casey: I disagree, and I need you to listen."
+    - text: /6 turns · alex example, casey example Jan 1, \d+, 7:\d+ PM – Jan 1, \d+, 7:\d+ PM/
+    - group "Relevance feedback for result 1":
+      - text: Was this useful?
+      - button "Mark result 1 relevant"
+      - button "Mark result 1 not relevant"
+      - button "Mark result 1 uncertain"
+      - group: Evaluation details
+    - link "Jump to source":
+      - /url: /conversations/conv-alex?around=message-one#message-message-one
+- region "Ask across retrieved excerpts":
+  - heading "Ask across retrieved excerpts" [level=2]
+  - paragraph: Optional cited RAG sends only the top local excerpts to OpenAI. Source text is treated as untrusted data and every supported answer must cite a returned result.
+  - text: Cloud Enabled Question
+  - textbox "Question":
+    - /placeholder: Ask a question grounded in the archive…
+    - text: argument
+  - button "Generate cited answer"
+  - group: Local RAG audit history (0 on this page)

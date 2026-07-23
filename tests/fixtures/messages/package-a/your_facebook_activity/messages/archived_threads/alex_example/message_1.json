@@ -1,0 +1,90 @@
+{
+  "title": "Alex Example",
+  "participants": [
+    {"name": "Archive Owner"},
+    {"name": "Alex Example"}
+  ],
+  "messages": [
+    {
+      "sender_name": "Archive Owner",
+      "timestamp_ms": 3000000,
+      "content": "FranÃ§ais ＡＢＣ",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false,
+      "reactions": [
+        {"actor": "Alex Example", "reaction": "â¤", "timestamp": 1700000000}
+      ],
+      "photos": [
+        {
+          "uri": "your_facebook_activity/messages/archived_threads/alex_example/photos/cross-chunk.jpg",
+          "creation_timestamp": 3000
+        },
+        {
+          "uri": "your_facebook_activity/messages/archived_threads/alex_example/photos/missing.jpg",
+          "creation_timestamp": 3000
+        }
+      ],
+      "videos": [
+        {
+          "uri": "your_facebook_activity/messages/archived_threads/alex_example/videos/example.mp4",
+          "creation_timestamp": 3000
+        }
+      ],
+      "audio_files": [
+        {
+          "uri": "your_facebook_activity/messages/archived_threads/alex_example/audio/example.m4a",
+          "creation_timestamp": 3000
+        }
+      ],
+      "files": [
+        {"uri": "../outside.txt", "creation_timestamp": 3000}
+      ],
+      "gifs": [
+        {"uri": "https://example.invalid/external.gif"},
+        {"uri": "your_facebook_activity/messages/archived_threads/alex_example/gifs/example.gif"}
+      ],
+      "sticker": {
+        "uri": "your_facebook_activity/messages/archived_threads/alex_example/stickers/example.png",
+        "ai_stickers": false
+      },
+      "ip": "192.0.2.10",
+      "payment_info": {"amount": "fixture-only"},
+      "fixture_extension": {"kept": true}
+    },
+    {
+      "sender_name": "Alex Example",
+      "timestamp_ms": 2000000,
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false,
+      "is_unsent": true
+    },
+    {
+      "sender_name": "Alex Example",
+      "timestamp_ms": 1900000,
+      "is_geoblocked_for_viewer": true,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Alex Example",
+      "timestamp_ms": 1800000,
+      "content": "Exact duplicate fixture",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    },
+    {
+      "sender_name": "Alex Example",
+      "timestamp_ms": 1800000,
+      "content": "Exact duplicate fixture",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    }
+  ],
+  "thread_path": "archived_threads/alex_example",
+  "is_still_participant": true,
+  "magic_words": [],
+  "joinable_mode": {"link": "", "mode": 0},
+  "image": {
+    "uri": "your_facebook_activity/messages/archived_threads/alex_example/thread-image.jpg",
+    "creation_timestamp": 2500
+  }
+}

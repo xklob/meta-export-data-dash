@@ -1,0 +1,280 @@
+- main:
+  - paragraph: Patterns & provenance
+  - heading "Archive analytics" [level=1]
+  - paragraph: Explore source-backed messaging, activity, attachment, conversation, and storage trends without ranking people or relationships.
+  - text: Bucket
+  - combobox "Bucket":
+    - option "Day"
+    - option "Week"
+    - option "Month" [selected]
+    - option "Year"
+  - text: Timezone
+  - textbox "Timezone": America/New_York
+  - complementary "Source coverage":
+    - strong: Messages
+    - text: Available 2 records
+    - paragraph: Only exported post-related records are shown.
+  - region "Analytics overview":
+    - article:
+      - paragraph: Messages
+      - strong: /\d+/
+      - text: /\d+ sent · \d+ received/
+    - article:
+      - paragraph: Average per day
+      - strong: "4"
+      - text: /\d+ local calendar days in America\/New_York/
+    - article:
+      - paragraph: Attachments
+      - strong: /\d+/
+      - text: /\d+ KiB/
+    - article:
+      - paragraph: Call time
+      - strong: /[\d,.]+[bkmBKM]+ \d+[hmsp]+/
+      - text: 3 calls · 1 missed
+  - region "Interaction and activity totals":
+    - article:
+      - paragraph: Message reactions
+      - strong: /\d+/
+      - text: 1 retained reaction types
+    - article:
+      - paragraph: Audio attachments
+      - strong: "4"
+      - text: Attachment occurrences
+    - article:
+      - paragraph: Facebook activity records
+      - strong: /\d+/
+      - text: Active source-backed records
+    - article:
+      - paragraph: Linked domains
+      - strong: "1"
+      - text: Most frequent domains listed below
+  - heading "Message volume over time" [level=2]
+  - paragraph: /\d+ messages across 1 observed month buckets; average \d+\./
+  - img "Sent, received, and active conversations by month":
+    - paragraph: A month series containing 1 observed periods.
+  - region "Activity streaks":
+    - article:
+      - paragraph: Longest streak
+      - strong: 1 days
+      - text: Consecutive local calendar days with retained activity
+    - article:
+      - paragraph: Latest streak
+      - strong: 1 days
+      - text: /Ending \d+-\d+-\d+/
+    - article:
+      - paragraph: Active days
+      - strong: "1"
+      - text: /Since \d+-\d+-\d+/
+    - article:
+      - paragraph: Peak day
+      - strong: /\d+/
+      - text: /\d+-\d+-\d+/
+  - heading "Archive activity calendar" [level=2]
+  - paragraph: Messages and dated Facebook activity by local calendar day in America/New_York. 5 archive-wide Facebook activity records have unknown dates and are excluded from time buckets.
+  - group "Activity calendar year":
+    - text: ""
+    - combobox "Calendar year" [disabled]:
+      - option /\d+/ [selected]
+  - img /Calendar heatmap of retained archive activity in \d+/:
+    - paragraph: /1 active calendar days in \d+; archive-wide longest consecutive streak 1 days\./
+  - paragraph: Timestamp bounds are inclusive at millisecond precision. Unknown-date Facebook activity is reported archive-wide but cannot be tested against a selected range and is never assigned to a time bucket.
+  - heading "Activity by hour" [level=2]
+  - paragraph: Local hour in America/New_York.
+  - img "Messages and Facebook activity by hour":
+    - paragraph: Twenty-four hourly buckets for source-backed messages and activity.
+  - heading "Weekday rhythm" [level=2]
+  - paragraph: Messages and activity by local weekday.
+  - img "Messages and Facebook activity by weekday":
+    - paragraph: Seven weekday buckets for messages and activity.
+  - region "Conversation timing summary":
+    - article:
+      - paragraph: Median time for you to reply
+      - strong: /\d+[hmsp]+/
+      - text: /\d+ direction changes/
+    - article:
+      - paragraph: Median time for others to reply
+      - strong: /\d+[hmsp]+/
+      - text: /\d+ direction changes/
+    - article:
+      - paragraph: Conversations you initiated
+      - strong: "4"
+      - text: First retained message direction.
+    - article:
+      - paragraph: Conversations others initiated
+      - strong: "6"
+      - text: First retained message direction; missing history can affect this.
+  - heading "Response-time distribution" [level=2]
+  - paragraph: Adjacent direction changes.
+  - img "Response time distributions by speaker direction":
+    - paragraph: /You replied in \d+ measured direction changes; others replied in \d+\./
+  - heading "Active participant labels" [level=2]
+  - paragraph: Distinct exported sender labels and active conversations per month.
+  - img "Active participant labels and conversations by month":
+    - paragraph: 1 observed periods. Participant labels are not authoritative Facebook IDs.
+  - heading "Conversation initiations" [level=2]
+  - paragraph: Timing is not used to rank people.
+  - img "First retained message direction by conversation":
+    - paragraph: 4 conversations begin with an owner message and 6 with another sender in the selected scope.
+  - region "Interaction event totals":
+    - article:
+      - paragraph: Calls over time
+      - strong: "3"
+      - text: /[\d,.]+[bkmBKM]+ \d+[hmsp]+ retained call time/
+    - article:
+      - paragraph: Reactions over time
+      - strong: /\d+/
+      - text: 4 used message time
+    - article:
+      - paragraph: Dated audio over time
+      - strong: "4"
+      - text: 1 unknown-date excluded
+    - article:
+      - paragraph: Linked URLs over time
+      - strong: "6"
+      - text: 1 retained domains
+  - heading "Interaction events over time" [level=2]
+  - paragraph: Calls, reactions, dated audio attachments, and linked URLs grouped by month in America/New_York. Unknown-date audio is reported separately and never assigned to a chart bucket.
+  - img "Calls, reactions, audio attachments, and linked URLs by month":
+    - paragraph: /3 calls, \d+ reactions, 4 dated audio attachments, and 6 linked URLs across 1 observed periods\./
+  - img "Top linked-domain occurrences by month":
+    - paragraph: "example.com: 6"
+  - group: How interaction timestamps were assigned
+  - heading "Local language-model trends" [level=2]
+  - paragraph: /\d+ versioned annotation samples, grouped by month in America\/New_York\. Every chart shows model estimates—not facts about a person or relationship\./
+  - group "Language-model trend filters":
+    - text: Time bucket
+    - combobox "Time bucket":
+      - option "Hour"
+      - option "Day"
+      - option "Week"
+      - option "Month" [selected]
+      - option "Year"
+    - text: Speaker/source
+    - combobox "Speaker/source":
+      - option "All sources" [selected]
+      - option "You"
+      - option "Others"
+      - option "Activity"
+      - option "Audio"
+      - option "Attachments"
+    - text: From
+    - textbox "From"
+    - text: Through
+    - textbox "Through"
+  - heading "Sentiment over time" [level=3]
+  - paragraph: "Expected score: mean positive probability minus mean negative probability. Hover points for sample size and mean model confidence."
+  - img "Model-estimated sentiment by month and speaker direction":
+    - paragraph: Expected sentiment across 1 observed period/direction buckets, with sample counts and mean confidence in each point.
+  - heading "Sentiment by local hour" [level=3]
+  - paragraph: All retained annotated sources averaged by hour of day in America/New_York.
+  - img "Model-estimated sentiment by local hour of day":
+    - paragraph: Twenty-four local-hour buckets with missing hours left blank.
+  - heading "Emotion probabilities" [level=3]
+  - paragraph: Top mean model-label probabilities over time. Labels describe text patterns, not internal emotional state.
+  - img "Top model-estimated emotion probabilities by month":
+    - paragraph: 1 observed period/direction buckets with full probability vectors.
+  - heading "Toxicity dimensions" [level=3]
+  - paragraph: Highest mean modeled toxicity-dimension score. Context, dialect, quotation, and banter can produce false positives.
+  - img "Model-estimated toxicity dimension by month and speaker direction":
+    - paragraph: 1 observed period/direction buckets; no people or relationships are ranked.
+  - group: Inspect sentiment sample sizes and confidence
+  - paragraph: "Rollup provenance: whole UTC hours overlapping the requested interval; local time at the UTC rollup hour start."
+  - list:
+    - listitem: No people are ranked.
+  - heading "Estimated direct-conflict-window rate" [level=2]
+  - paragraph: Time-only, calibration-gated classifications across the complete active message-window corpus. This never ranks people, conversations, or relationships.
+  - text: Ready
+  - group "Conflict rate filters":
+    - text: Conflict time bucket
+    - combobox "Conflict time bucket":
+      - option "Hour"
+      - option "Day"
+      - option "Week"
+      - option "Month" [selected]
+      - option "Year"
+    - text: From
+    - textbox "From"
+    - text: Through
+    - textbox "Through"
+  - region "Conflict aggregate summary":
+    - article:
+      - paragraph: Classified windows
+      - strong: /\d+/
+      - text: Overlapping text windows in the selected period
+    - article:
+      - paragraph: Estimated direct-conflict rate
+      - strong: /\d+\.\d+%/
+      - text: /\d+ top-labelled windows/
+  - img "Model-estimated direct-conflict-window rate by month":
+    - paragraph: /\d+ classified windows across 1 observed time buckets; bars show sample sizes\./
+  - group: Inspect conflict-rate samples
+  - paragraph: "Rollup provenance: whole UTC hours overlapping the requested interval."
+  - list:
+    - listitem: Model estimate; no people, conversations, or relationships are ranked.
+  - heading "Conversation and participant-label network" [level=2]
+  - paragraph: Top retained conversation. Participant labels are provisional.
+  - img "Bipartite graph of conversations and participant labels":
+    - paragraph: 1 conversation nodes, 1 provisional participant-label nodes, and 1 source-membership edges.
+  - group "Largest conversations represented in the graph":
+    - link /Alex Example \d+ messages/:
+      - /url: /conversations/one
+  - heading "Topic clusters" [level=2]
+  - paragraph: Unsupervised themes from a bounded sample of the active semantic text index. Labels are descriptive model estimates, never people or relationship rankings.
+  - text: Unavailable
+  - button "Build topics" [disabled]
+  - paragraph: Build the semantic text index before generating topic clusters.
+  - heading "Attachment trends over time" [level=2]
+  - paragraph: Dated attachment occurrences and bytes by month in America/New_York. 0 unknown-date occurrences remain in totals but not the chart.
+  - img "Attachment occurrences and bytes by month":
+    - paragraph: /\d+ dated occurrences across 1 observed periods\. Missing rate 0\.0%; unlinked rate 0\.0%\./
+  - paragraph: Fixture attachment timestamps.
+  - heading "Attachment mix and availability" [level=2]
+  - paragraph: Occurrence bytes count each send.
+  - img "Attachment occurrences, unique files, and bytes by type":
+    - paragraph: "/photo: \\d+ occurrences, 8 unique files, \\d+ B/"
+  - img "Attachment occurrences by availability":
+    - paragraph: "/resolved: \\d+ occurrences and \\d+ B/"
+  - heading "Storage composition" [level=2]
+  - paragraph: /\d+\.\d+ MiB in \d+ unique blobs\./
+  - img "Unique archive bytes by media class":
+    - paragraph: "/image: \\d+ B/"
+  - heading "Conversation types" [level=2]
+  - paragraph: /4 conversations; mean active span \d+\.\d+ days\./
+  - img "Conversation count by type":
+    - paragraph: "direct: 2, group: 1, system: 1"
+  - heading "Derived language signals" [level=2]
+  - paragraph: Sentiment, emotion, toxicity, and conflict only appear after versioned local annotation jobs finish.
+  - article:
+    - strong: Sentiment
+    - text: Unavailable
+    - paragraph: Not generated.
+  - article:
+    - strong: Emotion
+    - text: Unavailable
+    - paragraph: Not generated.
+  - article:
+    - strong: Toxicity
+    - text: Unavailable
+    - paragraph: Not generated.
+    - text: Relationship ranking is disabled.
+  - article:
+    - strong: Conflict
+    - text: Unavailable
+    - paragraph: Not calibrated.
+    - text: Relationship ranking is disabled.
+  - heading "Most linked domains" [level=2]
+  - paragraph: Domains found in retained message text and structured metadata.
+  - list "Most linked domains":
+    - listitem:
+      - text: example.com
+      - strong: "6"
+  - heading "Analytics coverage" [level=2]
+  - paragraph: Unavailable means the export cannot prove zero history.
+  - list "Analytics coverage statuses":
+    - listitem: Posts and albums Partial
+    - listitem: Events Unavailable
+  - paragraph: Coverage reflects the current export inventory; no earlier export snapshots were retained.
+  - paragraph: /This is one observed export snapshot\. Prior coverage snapshots were not captured, so no historical trend is inferred\. Observed \d+-\d+-\d+\./
+  - paragraph: Latest coverage-area catalog update time, not the export creation time.
+  - strong: Deduplication impact
+  - paragraph: /\d+ source file occurrences become \d+ unique blobs, avoiding \d+\.\d+ MiB of duplicate storage\./

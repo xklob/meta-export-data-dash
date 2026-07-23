@@ -1,0 +1,38 @@
+[
+  {
+    "timestamp": 1700000200,
+    "title": "Synthetic Person's fixture post",
+    "data": [
+      {
+        "reaction": {
+          "reaction": "LIKE",
+          "actor": "Archive User"
+        }
+      }
+    ]
+  },
+  {
+    "timestamp": 1700000300,
+    "title": "Another fixture post",
+    "data": [
+      {
+        "reaction": {
+          "reaction": "LOVE",
+          "actor": "Archive User"
+        }
+      }
+    ]
+  },
+  {
+    "timestamp": 1700000300,
+    "title": "Another fixture post",
+    "data": [
+      {
+        "reaction": {
+          "reaction": "LOVE",
+          "actor": "Archive User"
+        }
+      }
+    ]
+  }
+]

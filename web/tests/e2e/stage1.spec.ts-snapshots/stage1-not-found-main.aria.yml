@@ -1,0 +1,6 @@
+- main:
+  - paragraph: Page not found
+  - heading "This archive view does not exist." [level=1]
+  - paragraph: The route may belong to a future stage or the address may be incomplete.
+  - link "Return home":
+    - /url: /

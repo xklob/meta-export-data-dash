@@ -1,0 +1,64 @@
+- main:
+  - paragraph: Facebook events
+  - heading "Events" [level=1]
+  - paragraph: Browse hosted, attended, invited, interested, declined, and cancelled event records when present in the export.
+  - text: Search events
+  - textbox "Search events":
+    - /placeholder: Event title or description
+  - text: RSVP status
+  - combobox "RSVP status":
+    - option "Every status" [selected]
+    - option "Hosted"
+    - option "Created"
+    - option "Went"
+    - option "Interested"
+    - option "Invited"
+    - option "Declined"
+    - option "Cancelled"
+    - option "Unknown"
+  - text: Hosted by you
+  - combobox "Hosted by you":
+    - option "Either" [selected]
+    - option "Hosted"
+    - option "Not hosted"
+  - text: From
+  - textbox "From"
+  - text: Through
+  - textbox "Through"
+  - text: Sort
+  - combobox "Sort":
+    - option "Date" [selected]
+    - option "Title"
+    - option "Status"
+  - text: Direction
+  - combobox "Direction":
+    - option "Newest / Z–A" [selected]
+    - option "Oldest / A–Z"
+  - button "Apply filters"
+  - complementary "Source coverage":
+    - strong: Events
+    - text: Unavailable
+    - paragraph: Event history is unavailable in this export.
+    - paragraph: Missing source files mean this archive cannot establish that your history was empty.
+  - region "Event totals":
+    - article:
+      - paragraph: Matching events
+      - strong: —
+      - text: Source-backed records
+    - article:
+      - paragraph: Hosted / created
+      - strong: —
+      - text: Explicit source status
+    - article:
+      - paragraph: Attended
+      - strong: —
+      - text: Only explicit Went records
+    - article:
+      - paragraph: Other statuses
+      - strong: —
+      - text: Invited, interested, declined, etc.
+  - region "Event history":
+    - heading "Event history" [level=2]
+    - paragraph: Unknown dates and hosted status stay explicit.
+    - strong: Event history unavailable
+    - text: Event history is unavailable in this export.

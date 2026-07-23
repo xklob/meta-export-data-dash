@@ -1,0 +1,20 @@
+[
+  {
+    "title": "Alice Fixture",
+    "timestamp": 1700110000,
+    "label_values": [],
+    "fbid": "friend-alice"
+  },
+  {
+    "title": "Bob Fixture",
+    "timestamp": 1700120000,
+    "label_values": [],
+    "fbid": "friend-bob"
+  },
+  {
+    "title": "Charlie Fixture",
+    "timestamp": 1700130000,
+    "label_values": [],
+    "fbid": "friend-charlie"
+  }
+]

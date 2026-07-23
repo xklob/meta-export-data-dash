@@ -1,0 +1,81 @@
+- main:
+  - paragraph: People & relationship records
+  - heading "People" [level=1]
+  - paragraph: Explore conversation contacts and any authoritative friend, request, follower, or block records available in this export.
+  - navigation "People view":
+    - button "Messenger contacts" [pressed]
+    - button "Friends"
+    - button "Requests"
+    - button "Followers"
+    - button "Facebook blocks"
+    - button "Messenger blocks"
+  - region "People filters":
+    - text: Search names
+    - textbox "Search names":
+      - /placeholder: Find a person
+    - text: Conversation type
+    - combobox "Conversation type":
+      - option "Direct & groups" [selected]
+      - option "Has direct chat"
+      - option "Has shared group"
+    - text: Sort by
+    - combobox "Sort by":
+      - option "Messages" [selected]
+      - option "Photos"
+      - option "Videos"
+      - option "Audio"
+      - option "Conversations"
+      - option "Last activity"
+      - option "Name"
+    - text: Direction
+    - combobox "Direction":
+      - option "Highest / newest" [selected]
+      - option "Lowest / oldest"
+  - complementary "Source coverage":
+    - strong: Messenger contacts
+    - text: Derived 1 records
+    - paragraph: Contacts are participant labels and not authoritative Facebook friends.
+  - region "Visible contact exchange totals":
+    - article:
+      - paragraph: Contacts
+      - strong: "1"
+      - text: Participant labels, not friends
+    - article:
+      - paragraph: Messages
+      - strong: /\d+/
+      - text: Visible direct chats
+    - article:
+      - paragraph: Photos
+      - strong: "2"
+      - text: Direct-chat occurrences
+    - article:
+      - paragraph: Videos
+      - strong: "1"
+      - text: Direct-chat occurrences
+  - region "People results":
+    - article:
+      - heading "Alex Example" [level=2]
+      - paragraph: Messenger participant label
+      - text: Unknown
+      - term: Messages
+      - definition: /\d+/
+      - term: Photos
+      - definition: "2"
+      - term: Videos
+      - definition: "1"
+      - term: Audio
+      - definition: "1"
+      - text: First seen
+      - strong: /Sep \d+, \d+/
+      - text: Last seen
+      - strong: /Nov \d+, \d+/
+      - group: 2 linked conversations 1 direct · 1 group
+      - strong: Shared group threads (whole-thread totals)
+      - text: /\d+ messages · 1 photos · 0 videos · 0 audio/
+      - paragraph: These totals cover full group conversations and are not attributed to this person.
+    - navigation "People results pages":
+      - strong: Page 1
+      - text: 1 shown · 1 total
+      - button "Previous page" [disabled]
+      - button "Next page" [disabled]
+    - status

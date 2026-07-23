@@ -1,0 +1,215 @@
+- main:
+  - paragraph: Attachment archive
+  - heading "Media" [level=1]
+  - paragraph: Browse photos, videos, audio, stickers, GIFs, documents, and other files independently of message text. Every linked item keeps a jump back to its original context.
+  - region "Media totals":
+    - article:
+      - paragraph: Occurrences
+      - strong: "6"
+      - text: Every appearance in the archive
+    - article:
+      - paragraph: Unique files
+      - strong: "5"
+      - text: Content-identical bytes collapsed
+    - article:
+      - paragraph: Occurrence bytes
+      - strong: /\d+\.\d+ MiB/
+      - text: Duplicates counted separately
+    - article:
+      - paragraph: Unique bytes
+      - strong: /\d+\.\d+ MiB/
+      - text: Physical content total
+  - form "Media filters":
+    - strong: Filter media
+    - text: Counts and facets update from the complete matching catalog.
+    - group "Count mode":
+      - button "Occurrences" [pressed]
+      - button "Unique files"
+    - group "Display mode":
+      - button "Grid" [pressed]
+      - button "Table"
+    - text: Filename
+    - searchbox "Filename"
+    - text: Media type
+    - combobox "Media type":
+      - option "All types" [selected]
+      - option "Photo"
+      - option "Video"
+      - option "Audio"
+      - option "Gif"
+      - option "Sticker"
+      - option "Document"
+      - option "Other"
+    - text: Availability
+    - combobox "Availability":
+      - option "Any availability" [selected]
+      - option "Resolved"
+      - option "Missing"
+      - option "Unlinked"
+      - option "External"
+    - text: Attachment kind
+    - textbox "Attachment kind":
+      - /placeholder: photos, audio_files…
+    - text: Conversation title
+    - textbox "Conversation title":
+      - /placeholder: Search conversation names
+    - text: Conversation type
+    - combobox "Conversation type":
+      - option "All conversations" [selected]
+      - option "Direct"
+      - option "Group"
+      - option "System"
+    - text: Source category
+    - textbox "Source category":
+      - /placeholder: archived_threads
+    - text: From date
+    - textbox "From date"
+    - text: To date
+    - textbox "To date"
+    - text: Minimum size (MB)
+    - spinbutton "Minimum size (MB)"
+    - text: Maximum size (MB)
+    - spinbutton "Maximum size (MB)"
+    - text: Sort by
+    - combobox "Sort by":
+      - option "Date" [selected]
+      - option "File size"
+      - option "Media type"
+      - option "Filename"
+      - option "Conversation"
+      - option "Availability"
+    - text: Direction
+    - combobox "Direction":
+      - option "Descending" [selected]
+      - option "Ascending"
+    - text: Dates use America/New_York
+    - button "Reset"
+    - button "Apply filters"
+  - region "Media facets":
+    - strong: Types
+    - button "Photo 2"
+    - button "Video 1"
+    - button "Audio 1"
+    - button "Gif 0"
+    - button "Sticker 0"
+    - button "Document 1"
+    - button "Other 1"
+    - strong: Availability
+    - button "Resolved 4"
+    - button "Missing 1"
+    - button "Unlinked 1"
+    - button "External 0"
+  - region "Attachment occurrences":
+    - heading "Attachment occurrences" [level=2]
+    - paragraph: 6 loaded · 6 matching · grid view
+    - complementary "About unlinked files":
+      - paragraph:
+        - strong: Why these files have no source jump
+        - text: They were present in the export but no imported message or activity referenced them. Their cards include safe archive-relative source and library paths you can copy for filesystem browsing.
+    - list "Media gallery":
+      - listitem:
+        - img "date-night.jpg"
+        - text: Resolved
+        - heading "date-night.jpg" [level=3]
+        - paragraph: Alex Example
+        - term: Date
+        - definition: /Apr \d+, \d+/
+        - term: Size
+        - definition: /\d+\.\d+ MiB/
+        - term: Type
+        - definition: Photo
+        - term: Source
+        - definition: Archived Threads
+        - link "Jump to message":
+          - /url: /conversations/conv-alex?around=message-002&media=media-photo#message-message-002
+      - listitem:
+        - 'img "birthday.mp4: Preview unavailable"':
+          - strong: Preview unavailable
+          - text: Resolved
+        - text: Resolved
+        - heading "birthday.mp4" [level=3]
+        - paragraph: Birthday album
+        - term: Date
+        - definition: /Aug 8, \d+/
+        - term: Size
+        - definition: /\d+\.\d+ MiB/
+        - term: Type
+        - definition: Video
+        - term: Source
+        - definition: Posts
+        - link "Jump to activity":
+          - /url: /timeline?around=activity%3Aactivity-album#activity-activity-album
+      - listitem:
+        - 'img "voice-message.m4a: Preview unavailable"':
+          - strong: Preview unavailable
+          - text: Resolved
+        - text: Resolved
+        - heading "voice-message.m4a" [level=3]
+        - paragraph: Alex Example
+        - term: Date
+        - definition: /Dec 2, \d+/
+        - term: Size
+        - definition: /\d+ KiB/
+        - term: Type
+        - definition: Audio
+        - term: Source
+        - definition: E2ee Cutover
+        - link "Jump to message":
+          - /url: /conversations/conv-alex?around=message-099&media=media-audio#message-message-099
+      - listitem:
+        - link "notes.pdf Open file safely":
+          - /url: /api/v1/blobs/dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+          - strong: notes.pdf
+          - text: ""
+        - text: Resolved
+        - heading "notes.pdf" [level=3]
+        - paragraph: Alex Example
+        - term: Date
+        - definition: /Mar \d+, \d+/
+        - term: Size
+        - definition: /\d+ KiB/
+        - term: Type
+        - definition: Document
+        - term: Source
+        - definition: Archived Threads
+        - link "Jump to message":
+          - /url: /conversations/conv-alex?around=message-100&media=media-document#message-message-100
+      - listitem:
+        - 'img "missing-photo.jpg: File missing from export"':
+          - strong: File missing from export
+          - text: Missing
+        - text: Missing
+        - heading "missing-photo.jpg" [level=3]
+        - paragraph: Alex Example
+        - term: Date
+        - definition: /Jul \d+, \d+/
+        - term: Size
+        - definition: —
+        - term: Type
+        - definition: Photo
+        - term: Source
+        - definition: Archived Threads
+        - link "Jump to message":
+          - /url: /conversations/conv-alex?around=message-101&media=media-missing#message-message-101
+      - listitem:
+        - link "orphan.bin Open file safely":
+          - /url: /api/v1/blobs/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+          - strong: orphan.bin
+          - text: ""
+        - text: Unlinked Unknown date Unlinked
+        - heading "orphan.bin" [level=3]
+        - paragraph: Unknown
+        - term: Date
+        - definition: Unknown date
+        - term: Size
+        - definition: /\d+\.\d+ KiB/
+        - term: Type
+        - definition: Other
+        - term: Source
+        - definition: Unknown
+        - paragraph: This catalogued file was present in the export but was not referenced by an imported message or activity record.
+        - code: library/media/unlinked/unknown-date/unlinked--orphan--media-unlinked.bin
+        - button "Copy library path"
+        - text: No source link
+    - text: 6 of 6 occurrences loaded End of results
+  - paragraph: Missing and external files stay visible as metadata placeholders. Documents are never embedded as active web content.

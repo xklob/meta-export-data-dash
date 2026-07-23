@@ -1,0 +1,55 @@
+- main:
+  - paragraph: Foundation & consolidation
+  - heading "Archive control center" [level=1]
+  - paragraph: A private operational view of what was found, what is trustworthy, and what the local importer is doing now.
+  - link "Review integrity":
+    - /url: /integrity
+  - region "Archive totals":
+    - article:
+      - paragraph: Imported messages
+      - strong: /\d+/
+      - text: 4 logical conversations
+    - article:
+      - paragraph: Attachment references
+      - strong: /\d+/
+      - text: 4 currently unresolved
+    - article:
+      - paragraph: Source files
+      - strong: /\d+/
+      - text: 3 export chunks
+    - article:
+      - paragraph: Open anomalies
+      - strong: "3"
+      - text: 0 critical
+  - heading "Archive inventory" [level=2]
+  - paragraph: Read-only facts from the currently selected export.
+  - text: Active archive
+  - strong: meta-backup-fixture
+  - term: Total source size
+  - definition: /\d+ MiB/
+  - term: JSON manifests
+  - definition: /\d+/
+  - term: Activity records
+  - definition: /\d+/
+  - term: Unlinked media
+  - definition: "2"
+  - strong: JSON validation
+  - text: /\d+ processed · 0 pending · 0 invalid/
+  - progressbar "JSON manifests validated"
+  - strong: /\d+%/
+  - link "See exactly which Facebook categories are present":
+    - /url: /coverage
+  - heading "Latest job" [level=2]
+  - paragraph: Long-running work is resumable and stays on this device.
+  - strong: Archive Inventory
+  - text: Hashing source files Running
+  - progressbar "Archive Inventory progress"
+  - text: /\d+%/
+  - link "Open job history":
+    - /url: /jobs
+  - region "Your source export is never fetched from the browser.":
+    - paragraph: Private by design
+    - heading "Your source export is never fetched from the browser." [level=2]
+    - paragraph: The interface talks only to the localhost archive service. Cloud processing remains visibly off unless you explicitly change it in Settings.
+    - link "Privacy settings":
+      - /url: /settings

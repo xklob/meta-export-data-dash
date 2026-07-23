@@ -1,0 +1,57 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+.tox/
+.nox/
+.cache/
+.coverage
+coverage.xml
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Frontend
+node_modules/
+.pnpm-store/
+web/node_modules/
+web/dist/
+web/coverage/
+test-results/
+playwright-report/
+.private-review/
+
+# Runtime archive artifacts and private data
+meta-backup*/
+/catalog/
+/blobs/
+/library/
+/trash/
+/conflicts/
+/manifests/
+/models/
+/vectors/
+audited-baseline.json
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite-journal
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.lance/
+screenshots/
+.env
+.env.*
+!.env.example
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/

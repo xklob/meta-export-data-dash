@@ -1,0 +1,19 @@
+{
+  "title": "A Different Historical Thread Title",
+  "participants": [
+    {"name": "Alex Example"},
+    {"name": "Archive Owner"}
+  ],
+  "messages": [
+    {
+      "sender_name": "Alex Example",
+      "timestamp_ms": 4000000,
+      "content": "A second source segment",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false
+    }
+  ],
+  "thread_path": "e2ee_cutover/alex_example_new",
+  "is_still_participant": true,
+  "magic_words": []
+}

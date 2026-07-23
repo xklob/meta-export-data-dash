@@ -1,0 +1,41 @@
+- main:
+  - paragraph: Across the archive
+  - heading "Timeline" [level=1]
+  - paragraph: See messages and Facebook activity together, or revisit everything recorded on a calendar day.
+  - navigation "Timeline mode":
+    - button "Full timeline" [pressed]
+    - button "On this day"
+  - text: Search timeline
+  - textbox "Search timeline":
+    - /placeholder: Search messages and activity
+  - text: Record type
+  - combobox "Record type":
+    - option "Messages & activity" [selected]
+    - option "Messages only"
+    - option "Activity only"
+  - text: From
+  - textbox "From"
+  - text: Through
+  - textbox "Through"
+  - button "Apply"
+  - complementary "Source coverage":
+    - strong: Archive coverage
+    - text: Source Backed
+  - region "Archive chronology":
+    - heading "Archive chronology" [level=2]
+    - paragraph: 1 matching records
+    - text: America/New_York
+    - feed "Scrollable virtualized timeline":
+      - article:
+        - text: Activity
+        - strong: Fixture album photo
+        - time: /Nov \d+, \d+, 5:\d+ PM/
+        - paragraph: A retained caption
+        - text: Posts · Album Photo
+        - link "Open source point":
+          - /url: /timeline?around=activity:activity-one#activity-activity-one
+    - navigation "Timeline results pages":
+      - strong: Page 1
+      - text: 1 shown · 1 total
+      - button "Previous page" [disabled]
+      - button "Next page" [disabled]

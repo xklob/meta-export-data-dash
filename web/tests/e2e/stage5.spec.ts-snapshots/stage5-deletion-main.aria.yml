@@ -1,0 +1,86 @@
+- main:
+  - paragraph: Stage 5 · Destructive tools
+  - heading "Deletion and quarantine" [level=1]
+  - paragraph: Preview exact selections, move them into reversible logical quarantine, restore them, or explicitly hard-purge every workspace copy.
+  - alert:
+    - strong: Preview first. Tokens expire when the catalog changes.
+    - text: Commit is reversible until hard purge. Workspace purge rewrites source JSON and removes derived indexes; it cannot erase separate backups or storage-device remnants.
+  - heading "1. Build a selection" [level=2]
+  - paragraph: Exact-string matching is case-sensitive by default. End dates include the entire selected local day and are converted to a half-open UTC range.
+  - group "Record types":
+    - text: ""
+    - checkbox "Messages" [checked]
+    - text: Messages
+    - checkbox "Posts and activity" [checked]
+    - text: Posts and activity
+    - checkbox "Whole conversations"
+    - text: Whole conversations
+    - checkbox "Attachment occurrences"
+    - text: Attachment occurrences
+  - text: Text to match
+  - textbox "Text to match":
+    - /placeholder: Exact text or FTS phrase
+  - text: Match mode
+  - combobox "Match mode":
+    - option "Exact literal substring" [selected]
+    - option "FTS keyword / phrase"
+  - text: Text representation
+  - combobox "Text representation":
+    - option "Repaired display text" [selected]
+    - option "Raw source text"
+  - text: Inclusive start date
+  - textbox "Inclusive start date"
+  - text: Inclusive end date
+  - textbox "Inclusive end date"
+  - text: Display timezone
+  - textbox "Display timezone": America/New_York
+  - text: Participant label contains
+  - textbox "Participant label contains"
+  - text: Conversation IDs
+  - textbox "Conversation IDs":
+    - /placeholder: One ID per line or comma-separated
+  - checkbox "Case-sensitive" [checked]
+  - text: Case-sensitive
+  - checkbox "Whole field only"
+  - text: Whole field only
+  - group "Attachment media types":
+    - text: ""
+    - checkbox "Photo"
+    - text: Photo
+    - checkbox "Video"
+    - text: Video
+    - checkbox "Audio"
+    - text: Audio
+    - checkbox "Gif"
+    - text: Gif
+    - checkbox "Sticker"
+    - text: Sticker
+    - checkbox "Document"
+    - text: Document
+    - checkbox "Other"
+    - text: Other
+  - group "Attachment availability":
+    - text: ""
+    - checkbox "Resolved"
+    - text: Resolved
+    - checkbox "Missing"
+    - text: Missing
+    - checkbox "Unlinked"
+    - text: Unlinked
+    - checkbox "External"
+    - text: External
+  - checkbox "Allow an unbounded preview"
+  - text: Allow an unbounded preview
+  - button "Preview selection" [disabled]
+  - text: Add a filter or explicitly authorize an unbounded preview.
+  - heading "3. Operation history, restore, and purge" [level=2]
+  - paragraph: Select an operation to inspect its selector, audit trail, and available next actions.
+  - button "Refresh history"
+  - list "Deletion operations":
+    - listitem:
+      - button /Committed 2 records [0-9a-fA-F-]+ Jul \d+, \d+, 6:\d+ AM/:
+        - text: ""
+        - strong: 2 records
+        - code: /[0-9a-fA-F-]+/
+        - text: ""
+  - paragraph: Loading operation detail…

@@ -1,0 +1,32 @@
+[
+  {
+    "title": "Fixture event you created",
+    "timestamp": 1700010000,
+    "event_response": "created_event",
+    "hosted": true,
+    "label_values": [],
+    "fbid": "event-created"
+  },
+  {
+    "title": "Fixture event you attended",
+    "timestamp": 1700020000,
+    "event_response": "going",
+    "hosted": false,
+    "label_values": [],
+    "fbid": "event-went"
+  },
+  {
+    "title": "Fixture event invitation",
+    "timestamp": 1700030000,
+    "event_response": "invited",
+    "label_values": [],
+    "fbid": "event-invited"
+  },
+  {
+    "title": "Fixture cancelled event",
+    "timestamp": 1700040000,
+    "event_response": "canceled",
+    "label_values": [],
+    "fbid": "event-cancelled"
+  }
+]

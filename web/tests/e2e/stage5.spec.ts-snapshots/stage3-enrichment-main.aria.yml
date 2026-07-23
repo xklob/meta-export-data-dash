@@ -1,0 +1,59 @@
+- main:
+  - paragraph: Stage 3 · Local processing
+  - heading "Transcripts and language signals" [level=1]
+  - paragraph: Browse locally generated audio transcripts, safely extracted attachment text, and model-derived annotations with source jumps and model provenance.
+  - link "View background jobs":
+    - /url: /jobs
+  - note:
+    - strong: Local by default
+    - text: These derived records stay on this machine. Model labels are estimates—not facts about people or relationships.
+  - tablist "Enrichment views":
+    - tab "Overview" [selected]
+    - tab "Audio transcripts"
+    - tab "Extracted text"
+    - tab "Language signals"
+    - tab "Conflict review"
+  - tabpanel "Overview":
+    - region "Enrichment totals":
+      - article:
+        - paragraph: Audio transcriptions
+        - strong: "1"
+        - text: 1 current · 1 historical
+      - article:
+        - paragraph: Attachment extractions
+        - strong: "1"
+        - text: 1 current · 1 historical
+      - article:
+        - paragraph: Active NLP annotations
+        - strong: "1"
+        - text: 1 hourly rollups
+      - article:
+        - paragraph: Processing jobs
+        - strong: "0"
+        - text: 0 recent jobs
+    - heading "Run local enrichment" [level=2]
+    - paragraph: Start or resume bounded background jobs in this localhost process. Audio uses faster-whisper small on CPU INT8; attachment text stays inside Bubblewrap; language labels remain fallible local estimates.
+    - button "Transcribe audio"
+    - button "Extract attachment text"
+    - button "Annotate searchable text"
+    - button "Build conflict aggregates" [disabled]
+    - heading "Model and sandbox provenance" [level=2]
+    - paragraph: Every annotation retains its exact model revision and configuration. Attachment extraction fails closed if its local sandbox is unavailable.
+    - article:
+      - strong: Sentiment
+      - text: Available
+      - paragraph: fixture/sentiment
+      - code: revision-one
+      - text: English
+    - article:
+      - strong: Attachment sandbox
+      - text: Available
+      - paragraph: Network-isolated, bounded extraction
+      - code: bubblewrap
+      - text: Limits are recorded with every extraction.
+    - heading "Conflict calibration and aggregate gate" [level=2]
+    - paragraph: /Conflict labels remain a search aid until at least \d+ user-labelled windows and the held-out precision\/F1 gates pass\./
+    - text: Unavailable
+    - strong: 1 labelled windows
+    - paragraph: /\d+ more labels required\./
+    - text: "Relationship and conversation ranking: disabled"

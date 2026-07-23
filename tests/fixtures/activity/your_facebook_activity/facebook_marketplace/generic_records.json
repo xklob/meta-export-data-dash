@@ -1,0 +1,43 @@
+[
+  {
+    "timestamp": 1700000000,
+    "media": [],
+    "label_values": [
+      {
+        "label": "Title",
+        "value": "CafÃ© fixture listing"
+      },
+      {
+        "label": "Description",
+        "value": "A quiet, synthetic archive entry"
+      },
+      {
+        "label": "Photo",
+        "media": [
+          {
+            "uri": "your_facebook_activity/posts/media/example.jpg",
+            "creation_timestamp": 1700000001,
+            "description": "Synthetic fixture image"
+          }
+        ]
+      }
+    ],
+    "fbid": "fixture-record-1"
+  },
+  {
+    "timestamp": 0,
+    "media": [
+      {
+        "uri": "your_facebook_activity/posts/media/not-in-export.jpg",
+        "creation_timestamp": 0
+      }
+    ],
+    "label_values": [
+      {
+        "label": "Title",
+        "value": "Unknown-time fixture"
+      }
+    ],
+    "fbid": "fixture-record-2"
+  }
+]

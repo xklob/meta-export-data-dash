@@ -1,0 +1,37 @@
+- main:
+  - paragraph: Local preferences
+  - heading "Settings" [level=1]
+  - paragraph: Configure display behavior and explicit privacy choices. Source identity and archive location remain read-only here.
+  - region "Display":
+    - heading "Display" [level=2]
+    - paragraph: Dates remain stored in UTC and are converted only for presentation.
+    - text: Display timezone
+    - combobox "Display timezone Enter an IANA timezone such as America/New_York."
+    - text: Enter an IANA timezone such as America/New_York.
+  - region "Privacy & processing":
+    - heading "Privacy & processing" [level=2]
+    - paragraph: Cloud use is always explicit and permanently visible in the application shell.
+    - strong: Allow cloud-assisted features
+    - text: All current archive processing stays on this machine.
+    - checkbox "Allow cloud-assisted features"
+    - strong: Local-only mode is active.
+    - text: The browser communicates with the localhost service only.
+    - note:
+      - strong: OpenAI API data controls
+      - text: /RAG requests use the Responses API with storage disabled\. API data is not used to train OpenAI models by default, but standard abuse-monitoring logs may retain content for up to \d+ days unless your OpenAI project has stricter approved controls\./
+    - group "Image semantic classification":
+      - strong: Image semantic classification
+      - text: Stage 6
+      - paragraph: Disabled until every earlier stage is complete and you give a new, direct approval.
+      - button "Approval required" [disabled]
+  - complementary "Archive identity":
+    - heading "Archive identity" [level=2]
+    - paragraph: Set by the verified local catalog.
+    - term: Owner identity
+    - definition: Archive Owner
+    - term: Archive root
+    - definition: meta-backup-fixture
+    - term: Access mode
+    - definition: Localhost Only
+    - text: Settings are up to date
+    - button "Save settings" [disabled]

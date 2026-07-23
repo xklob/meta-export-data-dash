@@ -1,0 +1,20 @@
+{
+  "title": "Alex Example",
+  "participants": [
+    {"name": "Archive Owner"},
+    {"name": "Alex Example"}
+  ],
+  "messages": [
+    {
+      "sender_name": "Archive Owner",
+      "timestamp_ms": 1000000,
+      "content": "Older chunk",
+      "is_geoblocked_for_viewer": false,
+      "is_unsent_image_by_messenger_kid_parent": false,
+      "reactions": [{"actor": "Alex Example", "reaction": "👍"}]
+    }
+  ],
+  "thread_path": "archived_threads/alex_example",
+  "is_still_participant": true,
+  "magic_words": []
+}

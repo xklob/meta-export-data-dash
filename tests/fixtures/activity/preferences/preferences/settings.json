@@ -1,0 +1,11 @@
+{
+  "timestamp": 1700000100,
+  "media": [],
+  "label_values": [
+    {
+      "label": "Fixture preference",
+      "value": "Enabled"
+    }
+  ],
+  "fbid": "fixture-setting"
+}

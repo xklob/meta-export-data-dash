@@ -1,0 +1,39 @@
+{
+  "group_comments_v2": [
+    {
+      "timestamp": 1700000400,
+      "title": "A comment in Fixture Group",
+      "data": [
+        {
+          "comment": {
+            "author": "RenÃ©e Example",
+            "comment": "A cafÃ© comment containing only fixture text",
+            "group": "Fixture Group",
+            "timestamp": 1700000401
+          }
+        }
+      ],
+      "attachments": [
+        {
+          "data": [
+            {
+              "media": {
+                "uri": "your_facebook_activity/posts/media/example.jpg",
+                "creation_timestamp": 1700000402
+              },
+              "external_context": {
+                "name": "Fixture link",
+                "source": "example.invalid",
+                "url": "https://example.invalid/fixture"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "timestamp": 1700000410,
+      "title": "A metadata-only unavailable group comment"
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+- main:
+  - paragraph: Facebook support history
+  - heading "Support conversations" [level=1]
+  - paragraph: Browse the support-message threads retained in this export. These are kept separate from ordinary Messenger conversations and non-message support activity.
+  - complementary "Source coverage":
+    - strong: Support messages
+    - text: /Available \d+ records/
+    - paragraph: Exported support-message conversations are available.
+  - region "Support conversation totals":
+    - article:
+      - paragraph: Support threads
+      - strong: "2"
+      - text: Source-backed conversations
+    - article:
+      - paragraph: Messages on this page
+      - strong: /\d+/
+      - text: Across the threads shown below
+    - article:
+      - paragraph: Browsing mode
+      - strong: Local
+      - text: Opens the retained conversation reader
+  - region "Support thread history":
+    - heading "Support thread history" [level=2]
+    - paragraph: Open a thread to read its complete exported message history.
+    - article:
+      - heading "Account access case" [level=3]
+      - paragraph: /\d+ messages/
+      - text: /Sep \d+, \d+ – Nov \d+, \d+/
+      - link "Open conversation":
+        - /url: /conversations/support-one
+    - navigation "Support conversations pages":
+      - strong: Page 1
+      - text: 1 shown · 2 total
+      - button "Previous page" [disabled]
+      - button "Next page"
+    - status
