@@ -11,6 +11,19 @@ reconciliation is intentionally bounded and sampled as documented below. Image/v
 classification, OCR, zero-shot media tags, and the Memes dashboard remain excluded and require a
 new, explicit user approval.
 
+## Starred items
+
+Use the star control beside a conversation, individual message, attachment, unique media file,
+activity record, event, or Messenger contact to add it to the **Starred** page in the left
+navigation. That page combines every supported item type, filters by category, orders by when an
+item was starred, previews retained media, and links back to the exact message, conversation,
+activity record, event, or contact whenever a source jump is available.
+
+Stars are private catalog metadata and never modify the exported Facebook files. Reversible
+quarantine temporarily hides affected stars and restore makes the same star identities visible
+again. A confirmed hard purge removes stars whose targets are permanently erased. Reimport and
+conversation-correction workflows preserve stars when the same stable target remains available.
+
 ## Quick start
 
 Run the development setup below once, then choose the workflow that matches the archive state. For
@@ -369,8 +382,8 @@ test "$ui_postflight_status" -eq 0
 
 The server atomically creates the startup-token file with mode `0600`, never prints the
 token-bearing URL, and removes only that exact inode when it stops. The runner consumes that token,
-blocks non-loopback network requests, and records schema-5 evidence for exactly 34 page runs, 42
-required interaction stories (21 at each viewport), 34 screenshots, and two traces. Each page must
+blocks non-loopback network requests, and records schema-5 evidence for exactly 36 page runs, 42
+required interaction stories (21 at each viewport), 36 screenshots, and two traces. Each page must
 pass axe's WCAG 2.0/2.1/2.2 A/AA rules with no incomplete results, first-tab-stop skip-link,
 reduced-motion, root-overflow, console/request-error, initial-content, and route-identity checks;
 the largest reader must also stay within its loaded and rendered DOM bounds. Any nonzero service
@@ -670,12 +683,41 @@ the resumable local semantic index with:
 uv run meta-archive index-semantic --archive-root /path/to/meta-backup-export
 ```
 
-The default `auto` policy audits a deterministic sample with Lingua. It selects the small
-FastEmbed `bge-small-en-v1.5` CPU baseline below 5% detected non-English text and the
-`multilingual-e5-small` Transformers fallback otherwise. Pass `--model` to override that recorded choice. The
-multilingual fallback uses the revision-pinned Transformers model on CPU (about 0.47 GB). Model
-files and LanceDB vectors remain under the archive's ignored `catalog/` directory. Re-running the
-command reuses completed batches when the model, window policy, downloaded-model SHA-256, and
+The selected `auto` policy uses the English-only `BAAI/bge-base-en-v1.5` model pinned to commit
+`738cad1c108e2f23649db9e44b2eab988626493b`. Its archive-local FastEmbed adapter loads the pinned
+float16 `model_optimized.onnx` snapshot, truncates input at 512 tokens, leaves stored windows
+unprefixed, and prefixes searches with
+`Represent this sentence for searching relevant passages: `. It then applies CLS pooling, L2
+normalization, and 768-dimensional vectors. GTE ModernBERT and E5 base v2 remain registered,
+audited candidate aliases; their retained builds and results are not presented as selected
+defaults.
+
+This selection preserves two distinct evidence records. The stored BGE candidate evaluation,
+produced under the then-current evaluator v7, rejected automatic promotion on the incumbent-shaped
+compatibility cohort: Recall@10 was 0.282 versus 0.700 for the multilingual incumbent, MRR was
+0.384 versus 0.609, and nDCG@10 was 0.266 versus 0.588. E5 base v2 was later rejected on that
+cohort under evaluator v8, with 0.303 Recall@10, 0.423 MRR, and 0.282 nDCG@10. Every judgment in the
+cohort was collected while the multilingual incumbent was active, so these remain
+backward-compatibility results rather than a neutral blind comparison.
+
+A separate blinded, archive-specific paired review favored BGE across all entity types with
+6 wins, 1 tie, and 0 losses. Restricting the review to message windows produced 3 wins, 2 ties, and
+2 losses, with effectively equal mean graded DCG. This qualitative review informed the user's
+explicit choice of audited BGE activation, but does not rewrite the formal gate:
+`production_acceptance_passed` remains false. The generic CLI-only
+`activate-semantic-candidate CONFIG_ID --acknowledge-failed-quality-gate` path can activate any
+complete rejected candidate and records that decision in provenance. HTTP clients may request a
+registered alias for a normal gated build, but cannot request manual activation or bypass
+acceptance.
+
+To upgrade an existing semantic index while reusing its unchanged deterministic text windows:
+
+```bash
+uv run meta-archive index-semantic --archive-root /path/to/meta-backup-export --reuse-windows
+```
+
+Model files and LanceDB vectors remain under the archive's ignored `catalog/` directory. Re-running
+the command reuses completed batches when the model, window policy, downloaded-model SHA-256, and
 source corpus are unchanged. Interrupted workers are recovered through the process-safe build lock;
 the HTTP index endpoint queues the same resumable worker and reports progress through search status.
 Per-configuration SQLite window memberships reconcile exactly with unique Lance IDs, so a new
@@ -710,6 +752,15 @@ pinned cross-encoder, and hybrid RRF ranking path used by the application. Accep
 Recall@10 of at least 0.60, MRR of at least 0.50, and nDCG@10 of at least 0.55; missing, stale, or
 relevance-free query groups fail closed. Query text and reviewed excerpts remain local and are
 omitted from aggregate acceptance reports.
+
+Evaluator v8 also records exact-cosine candidate Recall@50 and Recall@200 before reranking, plus
+separate semantic and hybrid metrics. Truncated query or judgment evidence fails closed. When a
+different active index has comparable evidence from the same corpus, feedback revision, query
+count, ranking pipeline, and pinned reranker, automatic activation requires Recall@10, MRR, and
+nDCG@10 each to remain within 0.02 of the incumbent and at least one of those metrics to improve by
+0.02 or more. The small incumbent-selected judgment pool can underrate relevant results found only
+by a new model, but that limitation is reported as a cohort caveat rather than used to turn a
+failed automatic result into a passing one.
 
 The exact literal `argument` has an additional fail-closed, query-specific ranking path. Its
 trigger is deliberately narrow: Unicode NFKC normalization, case folding, and trimming outer

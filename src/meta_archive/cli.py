@@ -60,7 +60,12 @@ from meta_archive.services.nlp_annotations import (
     conflict_aggregation_status,
 )
 from meta_archive.services.search import SearchFilters, SearchUnavailableError
-from meta_archive.services.search_index import build_semantic_index, queue_semantic_index_job
+from meta_archive.services.search_index import (
+    SemanticIndexManualActivationError,
+    activate_rejected_semantic_candidate,
+    build_semantic_index,
+    queue_semantic_index_job,
+)
 from meta_archive.services.source_import_lock import source_import_publication_lock
 from meta_archive.services.source_retirement import retire_source_chunks
 from meta_archive.services.support_library_scrub import (
@@ -991,7 +996,7 @@ def index_semantic(
         str | None,
         typer.Option(
             "--model",
-            help="Embedding model alias: bge-small-en-v1.5 or multilingual-e5-small.",
+            help="Embedding model alias. Default/auto: bge-base-en-v1.5.",
         ),
     ] = None,
     rebuild_windows: Annotated[
@@ -1002,7 +1007,11 @@ def index_semantic(
         ),
     ] = True,
 ) -> None:
-    """Build or resume the local LanceDB semantic-text index."""
+    """Build or resume the local LanceDB semantic-text index.
+
+    Rejected complete candidates remain inactive. An explicit audited override uses
+    `activate-semantic-candidate CONFIG_ID --acknowledge-failed-quality-gate`.
+    """
 
     layout = _layout(archive_root)
     engine = _catalog(layout)
@@ -1024,6 +1033,46 @@ def index_semantic(
         raise typer.Exit(2) from exc
     except Exception as exc:
         console.print(f"[red]Semantic index job {job_id} failed:[/red] {type(exc).__name__}: {exc}")
+        raise typer.Exit(1) from None
+    console.print_json(json.dumps(asdict(summary)))
+
+
+@app.command("activate-semantic-candidate")
+def activate_semantic_candidate(
+    config_id: Annotated[
+        str,
+        typer.Argument(
+            help="Exact 64-character config ID of one complete rejected semantic candidate."
+        ),
+    ],
+    archive_root: ArchiveRootOption = None,
+    acknowledge_failed_quality_gate: Annotated[
+        bool,
+        typer.Option(
+            "--acknowledge-failed-quality-gate",
+            help=(
+                "Acknowledge that this candidate failed the automatic retrieval quality gate "
+                "and activate it anyway."
+            ),
+        ),
+    ] = False,
+) -> None:
+    """Manually activate one rejected semantic candidate through an audited CLI-only path."""
+
+    layout = _layout(archive_root)
+    engine = _catalog(layout)
+    try:
+        summary = activate_rejected_semantic_candidate(
+            layout,
+            engine,
+            config_hash=config_id,
+            acknowledge_failed_quality_gate=acknowledge_failed_quality_gate,
+        )
+    except (SemanticIndexManualActivationError, ValueError) as exc:
+        console.print(f"[red]Manual semantic activation refused:[/red] {exc}")
+        raise typer.Exit(2) from None
+    except Exception as exc:
+        console.print(f"[red]Manual semantic activation failed:[/red] {type(exc).__name__}: {exc}")
         raise typer.Exit(1) from None
     console.print_json(json.dumps(asdict(summary)))
 

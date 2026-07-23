@@ -144,6 +144,13 @@ from meta_archive.services.source_import_lock import (
     SourceImportPublicationLockError,
     source_import_publication_lock,
 )
+from meta_archive.services.stars import (
+    StarTargetKey,
+    StarTargetType,
+    delete_stars_for_targets,
+    messenger_contact_ids_eliminated_by_conversation_removal,
+    star_rows_by_target,
+)
 
 EntityType = Literal["message", "activity", "conversation", "attachment"]
 TextMode = Literal["exact", "keyword"]
@@ -2930,6 +2937,49 @@ def _vector_identity_inventory(
     return registered, available, identities, None
 
 
+def _normalized_hard_purge_star_targets(
+    session: Session,
+    selected: dict[EntityType, set[str]],
+) -> set[StarTargetKey]:
+    """Return stars whose normalized targets become permanently unavailable."""
+
+    targets: set[StarTargetKey] = {
+        (cast(StarTargetType, entity_type), entity_id)
+        for entity_type, entity_ids in selected.items()
+        for entity_id in entity_ids
+    }
+    targets.update(
+        ("messenger_contact", contact_id)
+        for contact_id in messenger_contact_ids_eliminated_by_conversation_removal(
+            session,
+            selected["conversation"],
+        )
+    )
+    return targets
+
+
+def _blob_star_targets(blob_ids: Iterable[str]) -> set[StarTargetKey]:
+    return {("blob", blob_id) for blob_id in blob_ids}
+
+
+def _star_revision_rows(
+    session: Session,
+    targets: Iterable[StarTargetKey],
+) -> list[dict[str, str]]:
+    """Bind every affected star to a purge plan without copying target content."""
+
+    rows = star_rows_by_target(session, targets)
+    return [
+        {
+            "id": row.id,
+            "target_type": row.target_type,
+            "target_id": row.target_id,
+            "starred_at": str(_json_value(row.starred_at)),
+        }
+        for _key, row in sorted(rows.items())
+    ]
+
+
 def _purge_state(
     layout: ArchiveLayout,
     session: Session,
@@ -3014,6 +3064,14 @@ def _purge_state(
         )
     except RawSourceRewriteError as exc:
         raw_rewrite_error = str(exc)
+    star_targets = _normalized_hard_purge_star_targets(session, selected)
+    if scope == "workspace":
+        star_targets.update(
+            _blob_star_targets(
+                resources["physically_exclusive_blob_ids"] | set(raw_rewrite_plan.obsolete_blob_ids)
+            )
+        )
+    star_revision = _star_revision_rows(session, star_targets)
     missing: list[str] = []
     not_quarantined: list[str] = []
     current_snapshots: list[tuple[str, str, str]] = []
@@ -3212,6 +3270,7 @@ def _purge_state(
         "audio_transcript_segments": transcript_segment_count,
         "attachment_text_extractions": extraction_count,
         "nlp_annotations": nlp_count,
+        "stars_removed": len(star_revision),
         "raw_source_files": len(source_file_ids),
         "raw_source_files_rewritten": len(raw_rewrite_plan.rewrites),
         "raw_source_obsolete_blobs": len(raw_rewrite_plan.obsolete_blob_ids),
@@ -3254,6 +3313,7 @@ def _purge_state(
             "resources": {key: sorted(value) for key, value in resources.items()},
             "workspace_files": workspace_files,
             "raw_rewrites": raw_rewrite_plan.revision_records(),
+            "star_revision": star_revision,
             "library_revision": library_revision,
             "conflict_holding_revision": conflict_holding_revision,
             "analytics_cache_revision": analytics_cache_revision,
@@ -3399,6 +3459,8 @@ def _normalized_workspace_purge_state(
         physical_source_identity_error = str(exc)
     rewrite_source_file_ids = {rewrite.source_file_id for rewrite in saved.raw_plan.rewrites}
     blob_delete_candidates = physical_blobs | set(saved.raw_plan.obsolete_blob_ids)
+    blob_star_targets = _blob_star_targets(blob_delete_candidates)
+    star_revision = _star_revision_rows(session, blob_star_targets)
     late_source_file_refs: set[str] = set()
     for chunk in _chunks(sorted(blob_delete_candidates)):
         late_source_file_refs.update(
@@ -3533,6 +3595,7 @@ def _normalized_workspace_purge_state(
         "normalized_rows": 0,
         "workspace_upgrade": True,
         "candidate_blobs": len(physical_blobs),
+        "stars_removed": len(star_revision),
         "search_windows": 0,
         "workspace_files": len(workspace_files),
         "workspace_bytes": sum(row["size_bytes"] for row in workspace_files),
@@ -3587,6 +3650,7 @@ def _normalized_workspace_purge_state(
             "recreated_extraction_ids": sorted(recreated_extraction_ids),
             "late_source_file_refs": sorted(late_source_file_refs),
             "late_attachment_refs": sorted(late_attachment_refs),
+            "star_revision": star_revision,
             "impact": impact,
             "blockers": blockers,
             "item_count": len(items),
@@ -4544,10 +4608,12 @@ def _delete_normalized_rows(
     selected: dict[EntityType, set[str]],
     resources: dict[str, set[str]],
 ) -> dict[str, int]:
+    star_targets = _normalized_hard_purge_star_targets(session, selected)
     feedback_result = purge_window_feedback_and_calibrations(
         session, resources["purge_search_window_ids"]
     )
     affected: dict[str, int] = {
+        "stars": delete_stars_for_targets(session, star_targets),
         "nlp_annotations": _delete_nlp_rows(session, selected, resources),
         "nlp_hourly_rollups": (
             _result_rowcount(session.execute(delete(NlpHourlyRollup)))
@@ -5038,6 +5104,10 @@ def _execute_normalized_workspace_upgrade_locked(
             }
             affected.update(_reconcile_semantic_index_configs(session, vector_result))
             blob_ids_to_delete = physical_blobs | set(saved.raw_plan.obsolete_blob_ids)
+            affected["stars"] = affected.get("stars", 0) + delete_stars_for_targets(
+                session,
+                _blob_star_targets(blob_ids_to_delete),
+            )
             for chunk in _chunks(sorted(blob_ids_to_delete)):
                 affected["blobs"] += _result_rowcount(
                     session.execute(delete(Blob).where(Blob.sha256.in_(chunk)))
@@ -5378,6 +5448,10 @@ def execute_hard_purge(
                 if scope == "workspace":
                     blob_ids_to_delete = resources["physically_exclusive_blob_ids"] | set(
                         raw_plan.obsolete_blob_ids
+                    )
+                    affected["stars"] = affected.get("stars", 0) + delete_stars_for_targets(
+                        session,
+                        _blob_star_targets(blob_ids_to_delete),
                     )
                     for chunk in _chunks(sorted(blob_ids_to_delete)):
                         result = session.execute(delete(Blob).where(Blob.sha256.in_(chunk)))

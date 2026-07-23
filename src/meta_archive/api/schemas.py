@@ -25,7 +25,25 @@ class SettingsUpdate(BaseModel):
 class SemanticIndexRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    model: Literal["bge-small-en-v1.5", "multilingual-e5-small"] | None = None
+    model: (
+        Literal[
+            "bge-base-en-v1.5",
+            "e5-base-v2",
+            "gte-modernbert-base",
+            "bge-small-en-v1.5",
+            "mxbai-embed-large-v1",
+            "multilingual-e5-small",
+            "snowflake-arctic-embed-l",
+        ]
+        | None
+    ) = Field(
+        default=None,
+        description=(
+            "Embedding model alias. The default auto policy selects bge-base-en-v1.5. Supplying "
+            "an alias requests the normal audited build; manual acceptance override is "
+            "intentionally unavailable over HTTP."
+        ),
+    )
     rebuild_windows: bool = True
 
 

@@ -151,6 +151,35 @@ export interface ApiProblem {
 
 export type SortDirection = 'asc' | 'desc'
 
+export type StarTargetType =
+  | 'conversation'
+  | 'message'
+  | 'activity'
+  | 'attachment'
+  | 'blob'
+  | 'messenger_contact'
+
+export type StarCategory = 'all' | 'conversations' | 'messages' | 'media' | 'activity' | 'people'
+
+export interface StarTarget {
+  target_type: StarTargetType
+  target_id: string
+}
+
+export interface StarState {
+  id: string
+  starred_at: string
+}
+
+/**
+ * Star metadata is optional while an older catalog response is still cached.
+ * New API responses include both fields for every canonical star target.
+ */
+export interface Starrable {
+  star_target?: StarTarget
+  star?: StarState | null
+}
+
 export interface CursorPageMetadata {
   limit: number
   total: number
@@ -184,7 +213,7 @@ export interface ConversationContentProfile {
   attachment_records: 'available' | 'not_present'
 }
 
-export interface ConversationSummary {
+export interface ConversationSummary extends Starrable {
   id: string
   title: string
   type: string
@@ -307,7 +336,7 @@ export interface MediaDerivative {
   href?: string | null
 }
 
-export interface ArchiveAttachment {
+export interface ArchiveAttachment extends Starrable {
   id: string
   kind: string
   filename?: string | null
@@ -329,7 +358,7 @@ export interface MessageReaction {
   timestamp_ms?: number | null
 }
 
-export interface ConversationMessage {
+export interface ConversationMessage extends Starrable {
   id: string
   conversation_id: string
   segment?: {
@@ -468,7 +497,7 @@ export interface SourceReference {
   json_pointer?: string | null
 }
 
-export interface ActivityItem {
+export interface ActivityItem extends Starrable {
   id: string
   parent_id?: string | null
   category: string
@@ -511,7 +540,7 @@ export interface AroundResolution {
   relationship_id?: string
 }
 
-export interface TimelineItem {
+export interface TimelineItem extends Starrable {
   id: string
   entity_type: 'message' | 'activity'
   entity_id: string
@@ -544,7 +573,7 @@ export interface OnThisDayResponse {
   page: NullableCursorPageMetadata
 }
 
-export interface EventItem {
+export interface EventItem extends Starrable {
   id: string
   title?: string | null
   description?: string | null
@@ -585,7 +614,7 @@ export interface ContactConversation {
   href: string
 }
 
-export interface PersonItem {
+export interface PersonItem extends Starrable {
   id: string
   name?: string | null
   contact_basis?: string
@@ -624,7 +653,7 @@ export interface PeopleResponse {
   filters?: Record<string, unknown>
 }
 
-export interface SupportThread {
+export interface SupportThread extends Starrable {
   id: string
   title: string
   message_count: number
@@ -637,6 +666,33 @@ export interface SupportResponse {
   coverage: CoverageSummary
   items: SupportThread[]
   page: NullableCursorPageMetadata
+}
+
+export interface StarredItem {
+  kind: 'conversation' | 'message' | 'media' | 'activity' | 'person'
+  star_target: StarTarget
+  star: StarState
+  title: string
+  subtitle?: string | null
+  excerpt?: string | null
+  timestamp_ms?: number | null
+  jump?: ConversationJump | null
+  href?: string | null
+  media_scope?: 'occurrence' | 'unique'
+  media?: MediaItem | null
+  sender?: string | null
+  conversation?: (ConversationSummary & { title: string }) | { id: string; title?: string | null } | null
+  counts?: ContactCounts | null
+  conversations?: ContactConversation[]
+  provisional?: boolean
+}
+
+export interface StarsResponse {
+  items: StarredItem[]
+  page: CursorPageMetadata
+  category: StarCategory
+  direction: SortDirection
+  facets?: Partial<Record<StarCategory, number>>
 }
 
 export interface NlpAvailability {
@@ -1478,7 +1534,7 @@ export interface SearchWindow {
   last_timestamp_ms?: number | null
 }
 
-export interface SearchOccurrence {
+export interface SearchOccurrence extends Starrable {
   occurrence_id: string
   conversation_id?: string | null
   conversation_title?: string | null
@@ -1509,7 +1565,7 @@ export interface DerivedOccurrencesResponse {
   page: SearchOccurrencePage
 }
 
-export interface SearchResult {
+export interface SearchResult extends Starrable {
   id: string
   window_id?: string | null
   entity_type: 'message' | 'message_window' | 'activity' | 'audio_transcript' | 'attachment_text'
@@ -1551,7 +1607,20 @@ export interface SemanticIndexConfig {
   dimensions: number
   window_version: string
   window_count: number
-  audit?: Record<string, unknown>
+  audit?: SemanticIndexAudit
+}
+
+export interface SemanticManualActivationOverride {
+  version: string
+  activated_at: string
+  candidate_config_id: string
+  previous_active_config_id: string | null
+  acknowledged_failed_quality_gate: true
+  reason: string
+}
+
+export interface SemanticIndexAudit extends Record<string, unknown> {
+  manual_activation_override?: SemanticManualActivationOverride | null
 }
 
 export interface SemanticRetrievalMetrics {
@@ -1570,6 +1639,23 @@ export interface SemanticRetrievalBenchmark {
   metrics: SemanticRetrievalMetrics
 }
 
+export interface SemanticUpgradeMetricComparison {
+  candidate: number
+  incumbent: number
+  delta: number
+  regression_exceeds_tolerance: boolean
+  demonstrated_improvement: boolean
+}
+
+export interface SemanticIncumbentComparison {
+  status: string
+  required_for_activation: boolean
+  passed: boolean | null
+  metrics?: Partial<
+    Record<'recall_at_k' | 'mrr' | 'ndcg_at_k', SemanticUpgradeMetricComparison>
+  >
+}
+
 export interface SemanticIndexAcceptanceEvaluation {
   evaluator_version: string
   evaluated_at: string
@@ -1577,6 +1663,7 @@ export interface SemanticIndexAcceptanceEvaluation {
   decision: string
   automatic_known_item: SemanticRetrievalBenchmark
   held_out_feedback: SemanticRetrievalBenchmark
+  active_incumbent_comparison?: SemanticIncumbentComparison
 }
 
 export interface SemanticIndexCandidateStatus {

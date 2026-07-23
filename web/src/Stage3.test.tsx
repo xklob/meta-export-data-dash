@@ -84,12 +84,36 @@ const rejectedEvaluation = {
       ndcg_at_k: 0.3,
     },
   },
+  held_out_feedback: {
+    ...acceptanceEvaluation.held_out_feedback,
+    status: 'failed',
+    passed: false,
+    used_for_activation: true,
+    metrics: {
+      query_count: 11,
+      k: 10,
+      recall_at_k: 0.303,
+      mrr: 0.423,
+      ndcg_at_k: 0.282,
+    },
+  },
+  active_incumbent_comparison: {
+    status: 'failed_regression',
+    required_for_activation: true,
+    passed: false,
+    metrics: {
+      recall_at_k: { candidate: 0.303, incumbent: 0.7, delta: -0.397, regression_exceeds_tolerance: true, demonstrated_improvement: false },
+      mrr: { candidate: 0.423, incumbent: 0.609, delta: -0.186, regression_exceeds_tolerance: true, demonstrated_improvement: false },
+      ndcg_at_k: { candidate: 0.282, incumbent: 0.588, delta: -0.306, regression_exceeds_tolerance: true, demonstrated_improvement: false },
+    },
+  },
 }
 
 function installFetchMock({
   ready = true,
   cloud = false,
   rejected = false,
+  manualOverride = false,
   stale = false,
   feedbackCount = 0,
   withOccurrences = false,
@@ -97,6 +121,7 @@ function installFetchMock({
   ready?: boolean
   cloud?: boolean
   rejected?: boolean
+  manualOverride?: boolean
   stale?: boolean
   feedbackCount?: number
   withOccurrences?: boolean
@@ -147,7 +172,7 @@ function installFetchMock({
     const method = (init?.method ?? 'GET').toUpperCase()
     if (url.pathname === '/api/v1/health') return Response.json({ status: 'ok', catalog_ready: true, catalog_state: 'ready' })
     if (url.pathname === '/api/v1/settings') return Response.json({ timezone: 'America/New_York', cloud_enabled: cloud, image_semantic_stage_enabled: false })
-    if (url.pathname === '/api/v1/search/status' && method === 'GET') return Response.json({ ready: effectiveReady, needs_rebuild: stale, stale_reason: stale ? { reason: 'Searchable audio transcript text changed', source_kind: 'audio_transcription', source_id: 'transcript-one' } : null, stale_config: stale ? { id: 'semantic-one', status: 'stale', model_name: 'fixture/embedding', model_revision: 'fixture-v1', window_count: 25 } : null, active: effectiveReady ? { id: 'semantic-one', status: 'ready', model_name: 'fixture/embedding', model_revision: 'fixture-v1', dimensions: 4, window_version: 'v1', window_count: 25, audit: {} } : null, acceptance: effectiveReady ? acceptanceEvaluation : null, latest_evaluation: rejected ? rejectedEvaluation : effectiveReady ? acceptanceEvaluation : null, latest_candidate: rejected ? { id: 'semantic-rejected', status: 'rejected', active: false, window_count: 25, evaluation: rejectedEvaluation } : effectiveReady ? { id: 'semantic-one', status: 'ready', active: true, window_count: 25, evaluation: acceptanceEvaluation } : null, latest_job: rejected ? { id: 'job-rejected', status: 'failed', stage: 'Semantic index rejected by retrieval quality gate' } : null })
+    if (url.pathname === '/api/v1/search/status' && method === 'GET') return Response.json({ ready: effectiveReady, needs_rebuild: stale, stale_reason: stale ? { reason: 'Searchable audio transcript text changed', source_kind: 'audio_transcription', source_id: 'transcript-one' } : null, stale_config: stale ? { id: 'semantic-one', status: 'stale', model_name: 'fixture/embedding', model_revision: 'fixture-v1', window_count: 25 } : null, active: effectiveReady ? { id: manualOverride ? 'semantic-override' : 'semantic-one', status: 'ready', model_name: manualOverride ? 'BAAI/bge-base-en-v1.5' : 'fixture/embedding', model_revision: 'fixture-v1', dimensions: 4, window_version: 'v1', window_count: 25, audit: manualOverride ? { manual_activation_override: { version: 'semantic-manual-activation-override-v1', activated_at: '2026-07-23T12:00:00Z', candidate_config_id: 'semantic-override', previous_active_config_id: 'semantic-one', acknowledged_failed_quality_gate: true, reason: 'Use the stronger English-language model for local semantic search.' } } : {} } : null, acceptance: effectiveReady && !manualOverride ? acceptanceEvaluation : null, latest_evaluation: rejected || manualOverride ? rejectedEvaluation : effectiveReady ? acceptanceEvaluation : null, latest_candidate: rejected ? { id: 'semantic-rejected', status: 'rejected', active: false, window_count: 25, evaluation: rejectedEvaluation } : manualOverride ? { id: 'semantic-override', status: 'ready', active: true, window_count: 25, evaluation: rejectedEvaluation } : effectiveReady ? { id: 'semantic-one', status: 'ready', active: true, window_count: 25, evaluation: acceptanceEvaluation } : null, latest_job: rejected || manualOverride ? { id: 'job-rejected', status: 'failed', stage: 'Semantic index rejected by retrieval quality gate' } : null })
     if (url.pathname === '/api/v1/search/index' && method === 'POST') return Response.json({ job_id: 'job-one', status: 'queued', status_href: '/api/v1/search/status' }, { status: 202 })
     if (url.pathname === '/api/v1/search' && method === 'GET') return Response.json({ items: [searchResult], page: { limit: 50, returned: 1, candidate_count: 1, result_cap: 1000, next_cursor: null }, query: url.searchParams.get('q'), mode: url.searchParams.get('mode'), filters: { entity_type: url.searchParams.get('entity_type') ?? 'all' }, index_config: effectiveReady ? { id: 'semantic-one', model_name: 'fixture/embedding' } : null })
     if (url.pathname === '/api/v1/search/derived-occurrences' && method === 'GET') {
@@ -193,6 +218,14 @@ function installFetchMock({
       const body = JSON.parse(String(init?.body)) as { question: string; search_mode: string }
       ragAuditItems.splice(0, ragAuditItems.length, { id: 'audit-one', status: 'completed', model: 'gpt-5.6-sol', query_sha256: 'hash', search_mode: body.search_mode, retrieved_ids: [result.id], citation_ids: [result.id], remote_response_id: 'response-local-audit-one', usage: { input_tokens: 20, output_tokens: 7, total_tokens: 27 }, created_at: '2026-07-20T10:00:00Z' })
       return Response.json({ answer: 'The cited exchange appears to be a disagreement.', citation_ids: [result.id], insufficient_evidence: false, sources: [result], audit_id: 'audit-one', model: 'gpt-5.6-sol' })
+    }
+    if (url.pathname.startsWith('/api/v1/stars/attachment/') && method === 'PUT') {
+      const targetId = decodeURIComponent(url.pathname.split('/').at(-1)!)
+      return Response.json({
+        star_target: { target_type: 'attachment', target_id: targetId },
+        star: { id: `star-${targetId}`, starred_at: '2026-07-23T01:00:00Z' },
+        created: true,
+      })
     }
     return Response.json({ detail: `Unhandled ${method} ${url.pathname}` }, { status: 404 })
   })
@@ -261,6 +294,28 @@ describe('Stage 3 search experience', () => {
     )
     expect(screen.getByText(/The prior ready index remains active/)).toBeVisible()
     expect(screen.getByRole('button', { name: 'Retry semantic index build' })).toBeEnabled()
+  })
+
+  it('keeps an explicitly overridden English candidate ready while retaining failed gate evidence', async () => {
+    installFetchMock({ manualOverride: true })
+    await renderSearch()
+
+    expect(await screen.findByText('BAAI/bge-base-en-v1.5 · 25 searchable windows')).toBeVisible()
+    expect(screen.getByText('Ready')).toBeVisible()
+    const overrideNotice = screen.getByText(/English BGE-base-en-v1.5 is active by explicit local override/).closest('p')
+    expect(overrideNotice).toHaveClass('search-index-card__override')
+    expect(overrideNotice).toHaveTextContent(
+      'English BGE-base-en-v1.5 is active by explicit local override; the previous result-pool compatibility gate remains recorded as failed.',
+    )
+    expect(overrideNotice).toHaveTextContent(
+      'Reason: Use the stronger English-language model for local semantic search.',
+    )
+    expect(screen.getByText('Semantic retrieval quality gate:').closest('p')).toHaveTextContent(
+      'Retrieval gate failed · known-item Recall@10 0.500 · MRR 0.250 · nDCG@10 0.300 · held-out 11 queries failed · compatibility candidate vs prior: Recall@10 0.303 vs 0.700 · MRR 0.423 vs 0.609 · nDCG@10 0.282 vs 0.588',
+    )
+    expect(screen.queryByText(/Latest candidate was rejected/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry semantic index build' })).not.toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /^Semantic/ })).toBeEnabled()
   })
 
   it('saves repeatable queries and records relevance feedback', async () => {
@@ -373,6 +428,11 @@ describe('Stage 3 search experience', () => {
     await user.click(await screen.findByText('26 source locations'))
 
     expect(screen.getAllByRole('link', { name: 'Jump to this occurrence' })).toHaveLength(5)
+    await user.click(screen.getAllByRole('button', { name: 'Star source occurrence' })[0]!)
+    expect(fetchMock.mock.calls.some(([input, init]) => (
+      new URL(String(input), 'http://localhost').pathname === '/api/v1/stars/attachment/occurrence-0'
+      && init?.method === 'PUT'
+    ))).toBe(true)
     expect(screen.queryByText('Conversation 21')).not.toBeInTheDocument()
     for (let index = 0; index < 3; index += 1) {
       await user.click(screen.getByRole('button', { name: 'Show more source locations' }))

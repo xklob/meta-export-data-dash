@@ -1005,56 +1005,162 @@ def _spot_semantic_evaluation_fixture(
     config_id: str,
     vector_table: str,
     window_count: int,
+    corpus_revision: str,
     held_revision: Mapping[str, object],
     development_revision: Mapping[str, object],
+    held_metric_value: float = 1.0,
+    incumbent_metrics: Mapping[str, float] | None = None,
 ) -> dict[str, object]:
     relevant = acceptance.DIRECT_CONFLICT_DEVELOPMENT_MIN_RELEVANT_COUNT
     not_relevant = acceptance.DIRECT_CONFLICT_DEVELOPMENT_MIN_NOT_RELEVANT_COUNT
-    judgment_count = relevant + not_relevant
+    revision_count = development_revision.get("row_count")
+    judgment_count = (
+        revision_count
+        if isinstance(revision_count, int)
+        and not isinstance(revision_count, bool)
+        and revision_count >= relevant + not_relevant
+        else relevant + not_relevant
+    )
+    uncertain = judgment_count - relevant - not_relevant
+    query_count = acceptance.HELD_OUT_MIN_QUERY_COUNT
+
+    def retrieval_metrics(count: int, value: float) -> dict[str, object]:
+        return {
+            "query_count": count,
+            "k": acceptance.SEMANTIC_IR_K,
+            "recall_at_k": value,
+            "mrr": value,
+            "ndcg_at_k": value,
+        }
+
+    def candidate_recall(count: int, value: float) -> dict[str, object]:
+        return {
+            "query_count": count,
+            **{f"recall_at_{k}": value for k in acceptance.SEMANTIC_CANDIDATE_RECALL_KS},
+        }
+
+    semantic_metrics = retrieval_metrics(query_count, held_metric_value)
+    hybrid_metrics = retrieval_metrics(0, 0.0)
+    semantic_recall = candidate_recall(query_count, held_metric_value)
+    hybrid_recall = candidate_recall(0, 0.0)
+    development_public_metrics = {name: 0.9 for name in acceptance.DIRECT_CONFLICT_PUBLIC_METRICS}
+    if incumbent_metrics is None:
+        incumbent_comparison: dict[str, object] = {
+            "status": "not_required_no_different_active_incumbent",
+            "required_for_activation": False,
+            "passed": None,
+            "reason_codes": [],
+            "non_regression_tolerance": (acceptance.SEMANTIC_UPGRADE_NON_REGRESSION_TOLERANCE),
+            "demonstrated_improvement_threshold": (
+                acceptance.SEMANTIC_UPGRADE_DEMONSTRATED_IMPROVEMENT
+            ),
+            "demonstrated_improvement_required": False,
+            "demonstrated_improvement": None,
+        }
+    else:
+        comparison_metrics: dict[str, object] = {}
+        for name in acceptance.SEMANTIC_UPGRADE_METRICS:
+            candidate_value = float(semantic_metrics[name])
+            incumbent_value = float(incumbent_metrics[name])
+            delta = candidate_value - incumbent_value
+            comparison_metrics[name] = {
+                "candidate": candidate_value,
+                "incumbent": incumbent_value,
+                "delta": delta,
+                "regression_exceeds_tolerance": (
+                    incumbent_value - candidate_value
+                    > acceptance.SEMANTIC_UPGRADE_NON_REGRESSION_TOLERANCE
+                ),
+                "demonstrated_improvement": (
+                    delta >= acceptance.SEMANTIC_UPGRADE_DEMONSTRATED_IMPROVEMENT
+                ),
+            }
+        incumbent_comparison = {
+            "status": "passed",
+            "required_for_activation": True,
+            "passed": True,
+            "non_regression_tolerance": (acceptance.SEMANTIC_UPGRADE_NON_REGRESSION_TOLERANCE),
+            "demonstrated_improvement_threshold": (
+                acceptance.SEMANTIC_UPGRADE_DEMONSTRATED_IMPROVEMENT
+            ),
+            "demonstrated_improvement_required": True,
+            "demonstrated_improvement": any(
+                bool(row["demonstrated_improvement"]) for row in comparison_metrics.values()
+            ),
+            "metrics": comparison_metrics,
+        }
     return {
         "passed": True,
         "production_acceptance_passed": True,
+        "decision": "accepted",
         "evaluator_version": acceptance.SEMANTIC_IR_EVALUATOR_VERSION,
         "candidate": {
             "config_hash": config_id,
             "vector_table": vector_table,
+            "corpus_revision": corpus_revision,
             "window_count": window_count,
             "distance_metric": "cosine",
+            "query_engine": "lancedb-exact-vector-search",
+            "approximate_index_requested": window_count >= 256,
         },
         "automatic_known_item": {
             "benchmark_kind": "automatic_known_item",
             "status": "passed",
             "passed": True,
             "used_for_activation": True,
-            "sampling": {"sampled_query_count": 2},
+            "sampling": {
+                "method": "stable-id-prefix-stratified-by-entity-type",
+                "query_cap": acceptance.KNOWN_ITEM_QUERY_CAP,
+                "sampled_query_count": 2,
+                "query_text_persisted": False,
+                "query_details_persisted": False,
+            },
             "thresholds": {
                 **acceptance.KNOWN_ITEM_THRESHOLDS,
                 "k": acceptance.SEMANTIC_IR_K,
             },
-            "metrics": dict(acceptance.KNOWN_ITEM_THRESHOLDS),
+            "metrics": retrieval_metrics(2, 1.0),
         },
         "held_out_feedback": {
             "benchmark_kind": "held_out_user_feedback",
             "status": "passed",
             "passed": True,
             "used_for_activation": True,
+            "ranking_pipeline": acceptance.SEMANTIC_RANKING_PIPELINE_VERSION,
+            "reranker": asdict(acceptance.DEFAULT_RERANKER_SPEC),
             "query_details_persisted": False,
             "feedback_revision": dict(held_revision),
             "feedback_revision_stable_during_evaluation": True,
             "minimum_query_count_for_activation": acceptance.HELD_OUT_MIN_QUERY_COUNT,
+            "query_cap": acceptance.FEEDBACK_QUERY_CAP,
+            "judgment_cap_per_query": acceptance.FEEDBACK_JUDGMENT_CAP_PER_QUERY,
             "thresholds": {
                 **acceptance.HELD_OUT_THRESHOLDS,
                 "k": acceptance.SEMANTIC_IR_K,
             },
-            "metrics": {
-                "query_count": acceptance.HELD_OUT_MIN_QUERY_COUNT,
-                **acceptance.HELD_OUT_THRESHOLDS,
+            "metrics": semantic_metrics,
+            "query_group_counts_by_mode": {
+                "semantic": query_count,
+                "hybrid": 0,
             },
+            "metrics_by_mode": {
+                "semantic": semantic_metrics,
+                "hybrid": hybrid_metrics,
+            },
+            "cosine_candidate_recall": semantic_recall,
+            "cosine_candidate_recall_by_mode": {
+                "semantic": semantic_recall,
+                "hybrid": hybrid_recall,
+            },
+            "evidence_truncated": False,
+            "query_selection_truncated": False,
+            "judgments_truncated": False,
             "exclusions": {
                 "without_relevant_window_judgment": 0,
                 "relevant_target_not_in_candidate": 0,
             },
         },
+        "active_incumbent_comparison": incumbent_comparison,
         "direct_conflict_development_calibration": {
             "benchmark_kind": acceptance.DIRECT_CONFLICT_DEVELOPMENT_BENCHMARK_KIND,
             "evaluation_intent": acceptance.DIRECT_CONFLICT_DEVELOPMENT_INTENT,
@@ -1068,7 +1174,11 @@ def _spot_semantic_evaluation_fixture(
             "query_details_persisted": False,
             "model_metadata": {
                 "classifier": acceptance.DIRECT_CONFLICT_CLASSIFIER,
+                "library": "scikit-learn",
                 "library_version": "fixture",
+                "ranker_version": acceptance.DIRECT_CONFLICT_RANKER_VERSION,
+                "score_kind": acceptance.DIRECT_CONFLICT_SCORE_KIND,
+                "parameters": asdict(acceptance.DEFAULT_DIRECT_CONFLICT_PARAMETERS),
             },
             "minimums": {
                 "relevant_count": relevant,
@@ -1081,24 +1191,92 @@ def _spot_semantic_evaluation_fixture(
             },
             "judgment_count": judgment_count,
             "reviewed_judgment_count": judgment_count,
-            "binary_judgment_count": judgment_count,
-            "conversation_group_count": acceptance.DIRECT_CONFLICT_DEVELOPMENT_FOLD_COUNT,
+            "binary_judgment_count": relevant + not_relevant,
+            "conversation_group_count": max(
+                relevant,
+                acceptance.DIRECT_CONFLICT_DEVELOPMENT_FOLD_COUNT,
+            ),
             "fold_count": acceptance.DIRECT_CONFLICT_DEVELOPMENT_FOLD_COUNT,
             "relevant_count": relevant,
             "not_relevant_count": not_relevant,
-            "uncertain_count": 0,
+            "uncertain_count": uncertain,
             "grouped_cross_validation": {
                 "fold_count": acceptance.DIRECT_CONFLICT_DEVELOPMENT_FOLD_COUNT,
-                "minimum_metrics": dict(acceptance.DIRECT_CONFLICT_DEVELOPMENT_THRESHOLDS),
-                "mean_metrics": dict(acceptance.DIRECT_CONFLICT_DEVELOPMENT_THRESHOLDS),
+                "minimum_metrics": development_public_metrics,
+                "mean_metrics": development_public_metrics,
+                "passed": True,
             },
             "literal_query_regression": {
-                "metrics": dict(acceptance.DIRECT_CONFLICT_DEVELOPMENT_THRESHOLDS)
+                "candidate_count": (acceptance.DIRECT_CONFLICT_LITERAL_REGRESSION_REVIEWED_COUNT),
+                "reviewed_judgment_count": (
+                    acceptance.DIRECT_CONFLICT_LITERAL_REGRESSION_REVIEWED_COUNT
+                ),
+                "relevant_judgment_count": (
+                    acceptance.DIRECT_CONFLICT_LITERAL_REGRESSION_RELEVANT_COUNT
+                ),
+                "not_relevant_judgment_count": (
+                    acceptance.DIRECT_CONFLICT_LITERAL_REGRESSION_NOT_RELEVANT_COUNT
+                ),
+                "uncertain_judgment_count": 0,
+                "cohort_complete": True,
+                "metrics": {
+                    "query_count": 1,
+                    "k": acceptance.DIRECT_CONFLICT_RANKING_K,
+                    **{name: 0.9 for name in acceptance.DIRECT_CONFLICT_DEVELOPMENT_THRESHOLDS},
+                },
+                "passed": True,
+                "failure_code": None,
             },
             "feedback_revision": dict(development_revision),
             "feedback_revision_stable_during_evaluation": True,
+            "private_material_fingerprint_sha256": "f" * 64,
         },
     }
+
+
+def _semantic_config_audit_fixture(
+    acceptance: ModuleType,
+    *,
+    spec: object,
+    accepted_evaluation: Mapping[str, object],
+    artifact_fingerprint: str,
+    corpus_revision: str,
+) -> dict[str, object]:
+    return {
+        "selected_model": asdict(spec),
+        "language_audit": {
+            "recommended_model": acceptance.AUTO_EMBEDDING_MODEL_ALIAS,
+            "selection_policy": acceptance.SEMANTIC_MODEL_SELECTION_POLICY,
+            "threshold_used_for_selection": False,
+        },
+        "recommended_model": acceptance.AUTO_EMBEDDING_MODEL_ALIAS,
+        "model_selection": "automatic_default",
+        "artifact_fingerprint": artifact_fingerprint,
+        "embedding_implementation": acceptance.embedding_implementation_identity(spec),
+        "corpus_revision": corpus_revision,
+        "accepted_semantic_ir_evaluation": dict(accepted_evaluation),
+    }
+
+
+def _legacy_e5_evaluation_fixture(
+    acceptance: ModuleType,
+    evaluation: Mapping[str, object],
+) -> dict[str, object]:
+    legacy = json.loads(json.dumps(evaluation))
+    legacy["evaluator_version"] = acceptance.LEGACY_SEMANTIC_IR_EVALUATOR_VERSION
+    # The build-time comparator intentionally used held-out acceptance, not the later
+    # direct-conflict production flag.
+    legacy["production_acceptance_passed"] = False
+    legacy.pop("active_incumbent_comparison", None)
+    held_out = legacy["held_out_feedback"]
+    for field in (
+        "metrics_by_mode",
+        "cosine_candidate_recall",
+        "cosine_candidate_recall_by_mode",
+        "evidence_truncated",
+    ):
+        held_out.pop(field, None)
+    return legacy
 
 
 def test_production_spot_check_parses_string_semantic_audit_json(
@@ -1107,8 +1285,28 @@ def test_production_spot_check_parses_string_semantic_audit_json(
     acceptance = _acceptance_module()
     import lancedb
 
-    spec = next(iter(acceptance.SEMANTIC_MODEL_SPECS.values()))
+    spec = acceptance.SEMANTIC_MODEL_SPECS[acceptance.AUTO_EMBEDDING_MODEL_ALIAS]
     window_id = "a" * 64
+    artifact_fingerprint = f"sha256:{'a' * 64}"
+    corpus_revision = "b" * 64
+    config_id = acceptance.embedding_config_hash(
+        spec,
+        corpus_revision=corpus_revision,
+        artifact_fingerprint=artifact_fingerprint,
+    )
+    vector_table = f"text_windows_{config_id[:16]}"
+    backend, backend_version = acceptance.embedding_backend(spec)
+    incumbent_spec = acceptance.SEMANTIC_MODEL_SPECS["multilingual-e5-small"]
+    incumbent_artifact_fingerprint = f"sha256:{'e' * 64}"
+    incumbent_backend, incumbent_backend_version = acceptance.embedding_backend(incumbent_spec)
+    incumbent_config_id = acceptance._legacy_e5_config_hash(
+        incumbent_spec,
+        backend=incumbent_backend,
+        backend_version=incumbent_backend_version,
+        corpus_revision=corpus_revision,
+        artifact_fingerprint=incumbent_artifact_fingerprint,
+    )
+    incumbent_vector_table = f"text_windows_{incumbent_config_id[:16]}"
     held_revision = {"version": "held", "sha256": "c" * 64, "row_count": 5}
     development_row_count = (
         acceptance.DIRECT_CONFLICT_DEVELOPMENT_MIN_RELEVANT_COUNT
@@ -1119,29 +1317,85 @@ def test_production_spot_check_parses_string_semantic_audit_json(
         "sha256": "d" * 64,
         "row_count": development_row_count,
     }
+    incumbent_metrics = {name: 0.9 for name in acceptance.SEMANTIC_UPGRADE_METRICS}
+    incumbent_evaluation = _legacy_e5_evaluation_fixture(
+        acceptance,
+        _spot_semantic_evaluation_fixture(
+            acceptance,
+            config_id=incumbent_config_id,
+            vector_table=incumbent_vector_table,
+            window_count=1,
+            corpus_revision=corpus_revision,
+            held_revision=held_revision,
+            development_revision=development_revision,
+            held_metric_value=0.9,
+        ),
+    )
+    incumbent_audit = _semantic_config_audit_fixture(
+        acceptance,
+        spec=incumbent_spec,
+        accepted_evaluation=incumbent_evaluation,
+        artifact_fingerprint=incumbent_artifact_fingerprint,
+        corpus_revision=corpus_revision,
+    )
+    incumbent_audit["selected_model"] = acceptance._legacy_e5_model_identity(incumbent_spec)
+    incumbent_audit["embedding_implementation"] = acceptance._legacy_e5_embedding_implementation(
+        incumbent_spec
+    )
+    incumbent_audit["model_selection"] = "explicit_config"
     accepted_evaluation = _spot_semantic_evaluation_fixture(
         acceptance,
-        config_id="b" * 64,
-        vector_table="fixture_vectors",
+        config_id=config_id,
+        vector_table=vector_table,
         window_count=1,
+        corpus_revision=corpus_revision,
         held_revision=held_revision,
         development_revision=development_revision,
+        incumbent_metrics=incumbent_metrics,
+    )
+    audit = _semantic_config_audit_fixture(
+        acceptance,
+        spec=spec,
+        accepted_evaluation=accepted_evaluation,
+        artifact_fingerprint=artifact_fingerprint,
+        corpus_revision=corpus_revision,
     )
     config = SimpleNamespace(
-        id="b" * 64,
+        id=config_id,
         status="ready",
+        backend=backend,
+        backend_version=backend_version,
         model_name=spec.model_name,
         model_revision=spec.model_revision,
         dimensions=spec.dimensions,
         distance_metric="cosine",
-        vector_table="fixture_vectors",
+        document_prefix=spec.document_prefix,
+        query_prefix=spec.query_prefix,
+        vector_table=vector_table,
         window_version=acceptance.SEARCH_WINDOW_VERSION,
         window_count=1,
-        audit_json=json.dumps({"accepted_semantic_ir_evaluation": accepted_evaluation}),
+        audit_json=json.dumps(audit),
     )
     configs = [config]
+    incumbent_configs = [
+        SimpleNamespace(
+            id=incumbent_config_id,
+            backend=incumbent_backend,
+            backend_version=incumbent_backend_version,
+            distance_metric="cosine",
+            vector_table=incumbent_vector_table,
+            window_version=acceptance.SEARCH_WINDOW_VERSION,
+            window_count=1,
+            audit_json=json.dumps(incumbent_audit),
+        )
+    ]
 
-    monkeypatch.setattr(acceptance, "_rows", lambda *_args, **_kwargs: configs)
+    def rows(
+        _connection: object, statement: str, *_args: object, **_kwargs: object
+    ) -> list[object]:
+        return incumbent_configs if "active = 0" in statement else configs
+
+    monkeypatch.setattr(acceptance, "_rows", rows)
     monkeypatch.setattr(acceptance, "held_out_feedback_revision", lambda _engine: held_revision)
     monkeypatch.setattr(
         acceptance,
@@ -1186,10 +1440,17 @@ def test_production_spot_check_parses_string_semantic_audit_json(
 
     class Database:
         def open_table(self, table_name: str) -> Table:
-            assert table_name == "fixture_vectors"
+            assert table_name == vector_table
             return Table()
 
     monkeypatch.setattr(lancedb, "connect", lambda _path: Database())
+    monkeypatch.setattr(
+        acceptance,
+        "pinned_transformers_artifact",
+        lambda *_args, **_kwargs: pytest.fail(
+            "bounded spot acceptance must not hash the model artifact"
+        ),
+    )
 
     checks, report = acceptance._spot_semantic_lance_sample(
         ArchiveLayout(Path("/fixture/archive")),
@@ -1202,13 +1463,41 @@ def test_production_spot_check_parses_string_semantic_audit_json(
     assert checks[0].status == "pass"
     assert report["certification_metadata_current"] is True
     assert report["lance_sample_valid"] is True
+    assert report["production_model_provenance"]["artifact_verification_mode"] == (
+        "bounded-metadata-only-reduced-assurance"
+    )
+
+    tampered_incumbent_audit = json.loads(json.dumps(incumbent_audit))
+    tampered_incumbent_audit["selected_model"]["model_revision"] = "stale"
+    incumbent_configs[0] = SimpleNamespace(
+        **{
+            **vars(incumbent_configs[0]),
+            "audit_json": json.dumps(tampered_incumbent_audit),
+        }
+    )
+    incumbent_valid, incumbent_report = acceptance._semantic_upgrade_incumbent_evidence(
+        object(), accepted_evaluation
+    )
+    assert incumbent_valid is False
+    assert incumbent_report["provenance_current_incumbent_count"] == 0
+    incumbent_configs[0] = SimpleNamespace(
+        **{
+            **vars(incumbent_configs[0]),
+            "audit_json": json.dumps(incumbent_audit),
+        }
+    )
 
     stale_evaluation = json.loads(json.dumps(accepted_evaluation))
     stale_evaluation["automatic_known_item"]["metrics"]["mrr"] = 0.0
     configs[0] = SimpleNamespace(
         **{
             **vars(config),
-            "audit_json": json.dumps({"accepted_semantic_ir_evaluation": stale_evaluation}),
+            "audit_json": json.dumps(
+                {
+                    **audit,
+                    "accepted_semantic_ir_evaluation": stale_evaluation,
+                }
+            ),
         }
     )
     stale, stale_report = acceptance._spot_semantic_certification_metadata(object(), configs[0])
@@ -1226,6 +1515,466 @@ def test_production_spot_check_parses_string_semantic_audit_json(
     )
     assert stale_revision is False
     assert stale_revision_report["held_out_feedback_revision_current"] is False
+
+
+def test_current_semantic_evidence_rejects_incomplete_or_forged_payloads() -> None:
+    acceptance = _acceptance_module()
+    evaluation = _spot_semantic_evaluation_fixture(
+        acceptance,
+        config_id="a" * 64,
+        vector_table=f"text_windows_{'a' * 16}",
+        window_count=255,
+        corpus_revision="b" * 64,
+        held_revision={"version": "held", "sha256": "c" * 64, "row_count": 5},
+        development_revision={
+            "version": "development",
+            "sha256": "d" * 64,
+            "row_count": 20,
+        },
+    )
+
+    valid, report = acceptance._semantic_v7_evidence(evaluation)
+    assert valid is True
+    assert report["search_mode_schema_valid"] is True
+    assert report["aggregate_metrics_reconcile_by_mode"] is True
+
+    improved_evaluation = _spot_semantic_evaluation_fixture(
+        acceptance,
+        config_id="a" * 64,
+        vector_table=f"text_windows_{'a' * 16}",
+        window_count=255,
+        corpus_revision="b" * 64,
+        held_revision={"version": "held", "sha256": "c" * 64, "row_count": 5},
+        development_revision={
+            "version": "development",
+            "sha256": "d" * 64,
+            "row_count": 20,
+        },
+        incumbent_metrics={name: 0.9 for name in acceptance.SEMANTIC_UPGRADE_METRICS},
+    )
+    improved_valid, improved_report = acceptance._semantic_v7_evidence(improved_evaluation)
+    assert improved_valid is True
+    assert improved_report["active_incumbent_comparison_valid"] is True
+
+    flat_evaluation = _spot_semantic_evaluation_fixture(
+        acceptance,
+        config_id="a" * 64,
+        vector_table=f"text_windows_{'a' * 16}",
+        window_count=255,
+        corpus_revision="b" * 64,
+        held_revision={"version": "held", "sha256": "c" * 64, "row_count": 5},
+        development_revision={
+            "version": "development",
+            "sha256": "d" * 64,
+            "row_count": 20,
+        },
+        incumbent_metrics={name: 1.0 for name in acceptance.SEMANTIC_UPGRADE_METRICS},
+    )
+    flat_valid, flat_report = acceptance._semantic_v7_evidence(flat_evaluation)
+    assert flat_valid is False
+    assert flat_report["active_incumbent_comparison_valid"] is False
+
+    wrong_approximation_policy = json.loads(json.dumps(evaluation))
+    wrong_approximation_policy["candidate"]["approximate_index_requested"] = True
+    wrong_approximation_valid, wrong_approximation_report = acceptance._semantic_v7_evidence(
+        wrong_approximation_policy
+    )
+    assert wrong_approximation_valid is False
+    assert wrong_approximation_report["candidate_metadata_current"] is False
+
+    for field in (
+        "evidence_truncated",
+        "query_selection_truncated",
+        "judgments_truncated",
+    ):
+        truncated = json.loads(json.dumps(evaluation))
+        truncated["held_out_feedback"][field] = True
+        truncated_valid, truncated_report = acceptance._semantic_v7_evidence(truncated)
+        assert truncated_valid is False
+        assert truncated_report["evidence_not_truncated"] is False
+
+    relabeled_v6 = json.loads(json.dumps(evaluation))
+    relabeled_v6["held_out_feedback"].pop("cosine_candidate_recall")
+    relabeled_valid, relabeled_report = acceptance._semantic_v7_evidence(relabeled_v6)
+    assert relabeled_valid is False
+    assert relabeled_report["cosine_candidate_recall_valid"] is False
+
+    unreconciled = json.loads(json.dumps(evaluation))
+    unreconciled["held_out_feedback"]["metrics"]["mrr"] = 0.95
+    unreconciled_valid, unreconciled_report = acceptance._semantic_v7_evidence(unreconciled)
+    assert unreconciled_valid is False
+    assert unreconciled_report["aggregate_metrics_reconcile_by_mode"] is False
+
+    invalid_automatic_count = json.loads(json.dumps(evaluation))
+    invalid_automatic_count["automatic_known_item"]["sampling"]["sampled_query_count"] = True
+    invalid_automatic_count["automatic_known_item"]["metrics"]["query_count"] = -1
+    invalid_automatic_valid, invalid_automatic_report = acceptance._semantic_v7_evidence(
+        invalid_automatic_count
+    )
+    assert invalid_automatic_valid is False
+    assert invalid_automatic_report["automatic_evidence_valid"] is False
+
+    boolean_automatic_metric_count = json.loads(json.dumps(evaluation))
+    boolean_automatic_metric_count["automatic_known_item"]["sampling"]["sampled_query_count"] = 1
+    boolean_automatic_metric_count["automatic_known_item"]["metrics"]["query_count"] = True
+    boolean_metric_valid, boolean_metric_report = acceptance._semantic_v7_evidence(
+        boolean_automatic_metric_count
+    )
+    assert boolean_metric_valid is False
+    assert boolean_metric_report["automatic_evidence_valid"] is False
+
+    boolean_zero_mode_counts = json.loads(json.dumps(evaluation))
+    boolean_zero_mode_counts["held_out_feedback"]["metrics_by_mode"]["hybrid"]["query_count"] = (
+        False
+    )
+    boolean_zero_mode_counts["held_out_feedback"]["cosine_candidate_recall_by_mode"]["hybrid"][
+        "query_count"
+    ] = False
+    boolean_zero_valid, boolean_zero_report = acceptance._semantic_v7_evidence(
+        boolean_zero_mode_counts
+    )
+    assert boolean_zero_valid is False
+    assert boolean_zero_report["metrics_by_mode_valid"] is False
+    assert boolean_zero_report["cosine_candidate_recall_by_mode_valid"] is False
+
+    automatic_over_cap = json.loads(json.dumps(evaluation))
+    automatic_over_cap["automatic_known_item"]["sampling"]["sampled_query_count"] = (
+        acceptance.KNOWN_ITEM_QUERY_CAP + 1
+    )
+    automatic_over_cap["automatic_known_item"]["metrics"]["query_count"] = (
+        acceptance.KNOWN_ITEM_QUERY_CAP + 1
+    )
+    automatic_over_cap_valid, automatic_over_cap_report = acceptance._semantic_v7_evidence(
+        automatic_over_cap
+    )
+    assert automatic_over_cap_valid is False
+    assert automatic_over_cap_report["automatic_evidence_valid"] is False
+
+    held_over_cap = json.loads(json.dumps(evaluation))
+    over_cap_count = acceptance.FEEDBACK_QUERY_CAP + 1
+    held_over_cap["held_out_feedback"]["metrics"]["query_count"] = over_cap_count
+    held_over_cap["held_out_feedback"]["query_group_counts_by_mode"]["semantic"] = over_cap_count
+    held_over_cap["held_out_feedback"]["metrics_by_mode"]["semantic"]["query_count"] = (
+        over_cap_count
+    )
+    held_over_cap["held_out_feedback"]["cosine_candidate_recall"]["query_count"] = over_cap_count
+    held_over_cap["held_out_feedback"]["cosine_candidate_recall_by_mode"]["semantic"][
+        "query_count"
+    ] = over_cap_count
+    held_over_cap_valid, held_over_cap_report = acceptance._semantic_v7_evidence(held_over_cap)
+    assert held_over_cap_valid is False
+    assert held_over_cap_report["aggregate_metrics_valid"] is False
+
+    forged_regression = json.loads(json.dumps(evaluation))
+    forged_regression["active_incumbent_comparison"] = {
+        "status": "passed",
+        "required_for_activation": True,
+        "passed": True,
+        "non_regression_tolerance": acceptance.SEMANTIC_UPGRADE_NON_REGRESSION_TOLERANCE,
+        "demonstrated_improvement_threshold": (
+            acceptance.SEMANTIC_UPGRADE_DEMONSTRATED_IMPROVEMENT
+        ),
+        "demonstrated_improvement_required": True,
+        "demonstrated_improvement": False,
+        "metrics": {
+            name: {
+                "candidate": 0.5,
+                "incumbent": 0.8,
+                "delta": -0.3,
+                "regression_exceeds_tolerance": False,
+                "demonstrated_improvement": False,
+            }
+            for name in acceptance.SEMANTIC_UPGRADE_METRICS
+        },
+    }
+    forged_valid, forged_report = acceptance._semantic_v7_evidence(forged_regression)
+    assert forged_valid is False
+    assert forged_report["active_incumbent_comparison_valid"] is False
+
+    complete_direct_conflict, direct_conflict_report = (
+        acceptance._complete_direct_conflict_evidence(
+            evaluation["direct_conflict_development_calibration"],
+            current_revision={
+                "version": "development",
+                "sha256": "d" * 64,
+                "row_count": 20,
+            },
+        )
+    )
+    assert complete_direct_conflict is True
+    assert direct_conflict_report["literal_regression_cohort_complete"] is True
+    incomplete_direct_conflict = json.loads(json.dumps(evaluation))
+    incomplete_direct_conflict["direct_conflict_development_calibration"][
+        "literal_query_regression"
+    ]["cohort_complete"] = False
+    incomplete_valid, incomplete_report = acceptance._complete_direct_conflict_evidence(
+        incomplete_direct_conflict["direct_conflict_development_calibration"],
+        current_revision={
+            "version": "development",
+            "sha256": "d" * 64,
+            "row_count": 20,
+        },
+    )
+    assert incomplete_valid is False
+    assert incomplete_report["literal_regression_cohort_complete"] is False
+
+    incumbent_evaluation = _spot_semantic_evaluation_fixture(
+        acceptance,
+        config_id="e" * 64,
+        vector_table=f"text_windows_{'e' * 16}",
+        window_count=255,
+        corpus_revision="b" * 64,
+        held_revision={"version": "held", "sha256": "c" * 64, "row_count": 5},
+        development_revision={
+            "version": "development",
+            "sha256": "d" * 64,
+            "row_count": 20,
+        },
+        held_metric_value=0.9,
+    )
+    incumbent_evaluation["evaluator_version"] = (
+        acceptance.PREVIOUS_SEMANTIC_IR_EVALUATOR_VERSION
+    )
+    candidate_evaluation = _spot_semantic_evaluation_fixture(
+        acceptance,
+        config_id="a" * 64,
+        vector_table=f"text_windows_{'a' * 16}",
+        window_count=255,
+        corpus_revision="b" * 64,
+        held_revision={"version": "held", "sha256": "c" * 64, "row_count": 5},
+        development_revision={
+            "version": "development",
+            "sha256": "d" * 64,
+            "row_count": 20,
+        },
+        incumbent_metrics={name: 0.9 for name in acceptance.SEMANTIC_UPGRADE_METRICS},
+    )
+    comparison_valid, comparison_report = acceptance._semantic_upgrade_comparison_binding(
+        candidate_evaluation,
+        incumbent_evaluation,
+    )
+    assert comparison_valid is True
+    assert comparison_report["stored_values_bound_to_candidate_and_incumbent"] is True
+    assert comparison_report["incumbent_metrics"]["previous_evaluator_evidence"] is True
+    unbound_candidate = json.loads(json.dumps(candidate_evaluation))
+    unbound_row = unbound_candidate["active_incumbent_comparison"]["metrics"]["mrr"]
+    unbound_row.update(
+        {
+            "candidate": 0.99,
+            "delta": 0.09,
+            "regression_exceeds_tolerance": False,
+            "demonstrated_improvement": True,
+        }
+    )
+    unbound_valid, unbound_report = acceptance._semantic_upgrade_comparison_binding(
+        unbound_candidate,
+        incumbent_evaluation,
+    )
+    assert unbound_valid is False
+    assert unbound_report["stored_comparison_required_and_valid"] is True
+    assert unbound_report["stored_values_bound_to_candidate_and_incumbent"] is False
+
+
+def test_production_semantic_config_provenance_requires_exact_automatic_model_hashes() -> None:
+    acceptance = _acceptance_module()
+    spec = acceptance.SEMANTIC_MODEL_SPECS[acceptance.AUTO_EMBEDDING_MODEL_ALIAS]
+    artifact_fingerprint = f"sha256:{'a' * 64}"
+    corpus_revision = "b" * 64
+    config_id = acceptance.embedding_config_hash(
+        spec,
+        corpus_revision=corpus_revision,
+        artifact_fingerprint=artifact_fingerprint,
+    )
+    vector_table = f"text_windows_{config_id[:16]}"
+    evaluation = _spot_semantic_evaluation_fixture(
+        acceptance,
+        config_id=config_id,
+        vector_table=vector_table,
+        window_count=1,
+        corpus_revision=corpus_revision,
+        held_revision={"version": "held", "sha256": "c" * 64, "row_count": 5},
+        development_revision={
+            "version": "development",
+            "sha256": "d" * 64,
+            "row_count": 20,
+        },
+    )
+    audit = _semantic_config_audit_fixture(
+        acceptance,
+        spec=spec,
+        accepted_evaluation=evaluation,
+        artifact_fingerprint=artifact_fingerprint,
+        corpus_revision=corpus_revision,
+    )
+    backend, backend_version = acceptance.embedding_backend(spec)
+    config = SimpleNamespace(
+        id=config_id,
+        backend=backend,
+        backend_version=backend_version,
+        model_name=spec.model_name,
+        model_revision=spec.model_revision,
+        dimensions=spec.dimensions,
+        distance_metric="cosine",
+        document_prefix=spec.document_prefix,
+        query_prefix=spec.query_prefix,
+        vector_table=vector_table,
+        window_version=acceptance.SEARCH_WINDOW_VERSION,
+        window_count=1,
+        audit_json=audit,
+    )
+
+    valid, report = acceptance._production_semantic_config_provenance(config)
+    assert valid is True
+    assert report["candidate_corpus_revision_current"] is True
+    assert report["selection_metadata_mode"] == "current"
+    assert report["artifact_verification_mode"] == ("bounded-metadata-only-reduced-assurance")
+
+    fully_verified, full_report = acceptance._production_semantic_config_provenance(
+        config,
+        independently_recomputed_artifact_fingerprint=artifact_fingerprint,
+        require_independent_artifact_fingerprint=True,
+    )
+    assert fully_verified is True
+    assert full_report["artifact_fingerprint_independently_verified"] is True
+    mismatched_artifact, mismatched_artifact_report = (
+        acceptance._production_semantic_config_provenance(
+            config,
+            independently_recomputed_artifact_fingerprint=f"sha256:{'0' * 64}",
+            require_independent_artifact_fingerprint=True,
+        )
+    )
+    assert mismatched_artifact is False
+    assert mismatched_artifact_report["artifact_fingerprint_independently_verified"] is False
+
+    malformed = SimpleNamespace(
+        **{
+            **vars(config),
+            "audit_json": {
+                **audit,
+                "artifact_fingerprint": "sha256:fixture",
+            },
+        }
+    )
+    malformed_valid, malformed_report = acceptance._production_semantic_config_provenance(malformed)
+    assert malformed_valid is False
+    assert malformed_report["artifact_fingerprint_recorded"] is False
+
+    mismatched_candidate = json.loads(json.dumps(audit))
+    mismatched_candidate["accepted_semantic_ir_evaluation"]["candidate"]["corpus_revision"] = (
+        "e" * 64
+    )
+    mismatch_valid, mismatch_report = acceptance._production_semantic_config_provenance(
+        SimpleNamespace(**{**vars(config), "audit_json": mismatched_candidate})
+    )
+    assert mismatch_valid is False
+    assert mismatch_report["candidate_corpus_revision_current"] is False
+
+    for field, stale_value in (
+        ("backend", "stale-backend"),
+        ("backend_version", "stale-version"),
+        ("dimensions", spec.dimensions + 1),
+        ("distance_metric", "dot"),
+        ("document_prefix", "stale document: "),
+        ("query_prefix", "stale query: "),
+        ("vector_table", "stale_vector_table"),
+        ("window_version", "stale-window-version"),
+        ("window_count", 2),
+        ("id", "0" * 64),
+    ):
+        stale_config = SimpleNamespace(**{**vars(config), field: stale_value})
+        stale_valid, _stale_report = acceptance._production_semantic_config_provenance(stale_config)
+        assert stale_valid is False, field
+
+    for audit_mutation in (
+        lambda value: value.update({"corpus_revision": "malformed"}),
+        lambda value: value["selected_model"].update({"model_revision": "stale"}),
+        lambda value: value["embedding_implementation"].update({"pooling": "stale"}),
+        lambda value: value.update({"model_selection": "injected"}),
+        lambda value: value["language_audit"].update({"selection_policy": "injected"}),
+    ):
+        stale_audit = json.loads(json.dumps(audit))
+        audit_mutation(stale_audit)
+        stale_valid, _stale_report = acceptance._production_semantic_config_provenance(
+            SimpleNamespace(**{**vars(config), "audit_json": stale_audit})
+        )
+        assert stale_valid is False
+
+
+def test_independent_embedding_artifact_fingerprint_uses_provider_pins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    acceptance = _acceptance_module()
+    layout = ArchiveLayout(Path("/fixture/archive"))
+    transformer_spec = acceptance.SEMANTIC_MODEL_SPECS["gte-modernbert-base"]
+    fastembed_spec = acceptance.SEMANTIC_MODEL_SPECS["bge-base-en-v1.5"]
+    fastembed_artifact = acceptance.PINNED_FASTEMBED_ARTIFACTS[fastembed_spec.alias]
+    calls: list[tuple[Path, str, str]] = []
+
+    def pinned_artifact(
+        cache_dir: Path,
+        *,
+        model_name: str,
+        model_revision: str,
+    ) -> SimpleNamespace:
+        calls.append((cache_dir, model_name, model_revision))
+        return SimpleNamespace(fingerprint_sha256="a" * 64)
+
+    monkeypatch.setattr(acceptance, "pinned_transformers_artifact", pinned_artifact)
+
+    assert (
+        acceptance._independent_embedding_artifact_fingerprint(
+            layout,
+            transformer_spec,
+        )
+        == f"sha256:{'a' * 64}"
+    )
+    assert (
+        acceptance._independent_embedding_artifact_fingerprint(
+            layout,
+            fastembed_spec,
+        )
+        == f"sha256:{'a' * 64}"
+    )
+    assert calls == [
+        (
+            layout.models / "transformers",
+            transformer_spec.model_name,
+            transformer_spec.model_revision,
+        ),
+        (
+            layout.models / "fastembed",
+            fastembed_artifact.repository,
+            fastembed_artifact.revision,
+        ),
+    ]
+
+    unpinned_fastembed = SimpleNamespace(
+        **{
+            **asdict(fastembed_spec),
+            "alias": "not-in-the-pinned-registry",
+        }
+    )
+    mismatched_revision = SimpleNamespace(
+        **{
+            **asdict(fastembed_spec),
+            "model_revision": "0" * 40,
+        }
+    )
+    assert (
+        acceptance._independent_embedding_artifact_fingerprint(
+            layout,
+            unpinned_fastembed,
+        )
+        is None
+    )
+    assert (
+        acceptance._independent_embedding_artifact_fingerprint(
+            layout,
+            mismatched_revision,
+        )
+        is None
+    )
+    assert len(calls) == 2
 
 
 def test_production_spot_check_keyset_sample_is_deterministic_and_has_no_offset(
@@ -1980,9 +2729,16 @@ def test_semantic_integrity_requires_exact_active_membership_and_lance_id_sets(
     window_ids = [window.id for window in windows]
     assert len(window_ids) > 1
 
-    spec = next(iter(acceptance.SEMANTIC_MODEL_SPECS.values()))
-    config_id = "real-acceptance-semantic-fixture"
-    vector_table_name = "real_acceptance_semantic_fixture"
+    spec = acceptance.SEMANTIC_MODEL_SPECS[acceptance.AUTO_EMBEDDING_MODEL_ALIAS]
+    artifact_fingerprint = f"sha256:{'a' * 64}"
+    corpus_revision = "b" * 64
+    config_id = acceptance.embedding_config_hash(
+        spec,
+        corpus_revision=corpus_revision,
+        artifact_fingerprint=artifact_fingerprint,
+    )
+    vector_table_name = f"text_windows_{config_id[:16]}"
+    backend, backend_version = acceptance.embedding_backend(spec)
     development_query_texts = [f"private development fixture {index}" for index in range(21)]
     development_feedback_rows = [
         {
@@ -2011,85 +2767,70 @@ def test_semantic_integrity_requires_exact_active_membership_and_lance_id_sets(
             development_feedback_rows,
         )
     development_revision = acceptance.development_feedback_revision(engine)
-    accepted_evaluation = {
-        "passed": True,
-        "production_acceptance_passed": True,
-        "evaluator_version": acceptance.SEMANTIC_IR_EVALUATOR_VERSION,
-        "candidate": {
-            "config_hash": config_id,
-            "vector_table": vector_table_name,
-            "window_count": len(window_ids),
-            "distance_metric": "cosine",
-        },
-        "automatic_known_item": {
-            "passed": True,
-            "used_for_activation": True,
-            "sampling": {"sampled_query_count": 2},
-        },
-        "held_out_feedback": {
-            "status": "passed",
-            "passed": True,
-            "used_for_activation": True,
-            "feedback_revision": acceptance.held_out_feedback_revision(engine),
-            "feedback_revision_stable_during_evaluation": True,
-            "metrics": {
-                "query_count": acceptance.HELD_OUT_MIN_QUERY_COUNT,
-                "recall_at_k": 1.0,
-                "mrr": 1.0,
-                "ndcg_at_k": 1.0,
-            },
-            "exclusions": {
-                "without_relevant_window_judgment": 0,
-                "relevant_target_not_in_candidate": 0,
-            },
-        },
-        "direct_conflict_development_calibration": {
-            "benchmark_kind": acceptance.DIRECT_CONFLICT_DEVELOPMENT_BENCHMARK_KIND,
-            "evaluation_intent": acceptance.DIRECT_CONFLICT_DEVELOPMENT_INTENT,
-            "evidence_kind": acceptance.DIRECT_CONFLICT_DEVELOPMENT_EVIDENCE_KIND,
-            "held_out": False,
-            "required_for_production_acceptance": True,
-            "status": "passed",
-            "passed": True,
-            "method": acceptance.DIRECT_CONFLICT_DEVELOPMENT_METHOD,
-            "ranking_pipeline": acceptance.DIRECT_CONFLICT_RANKING_PIPELINE_VERSION,
-            "query_details_persisted": False,
-            "model_metadata": {
-                "classifier": acceptance.DIRECT_CONFLICT_CLASSIFIER,
-                "library_version": "fixture",
-            },
-            "judgment_count": 21,
-            "reviewed_judgment_count": 21,
-            "binary_judgment_count": 20,
-            "conversation_group_count": 4,
-            "fold_count": acceptance.DIRECT_CONFLICT_DEVELOPMENT_FOLD_COUNT,
-            "relevant_count": 10,
-            "not_relevant_count": 10,
-            "uncertain_count": 1,
-            "grouped_cross_validation": {
-                "fold_count": acceptance.DIRECT_CONFLICT_DEVELOPMENT_FOLD_COUNT,
-                "minimum_metrics": {
-                    "recall_at_10": 0.7,
-                    "mrr_at_10": 0.8,
-                    "ndcg_at_10": 0.75,
-                },
-                "mean_metrics": {
-                    "recall_at_10": 0.8,
-                    "mrr_at_10": 0.9,
-                    "ndcg_at_10": 0.85,
-                },
-            },
-            "literal_query_regression": {
-                "metrics": {
-                    "recall_at_10": 0.75,
-                    "mrr_at_10": 1.0,
-                    "ndcg_at_10": 0.9,
-                }
-            },
-            "feedback_revision": development_revision,
-            "feedback_revision_stable_during_evaluation": True,
-        },
-    }
+    held_revision = acceptance.held_out_feedback_revision(engine)
+    incumbent_spec = acceptance.SEMANTIC_MODEL_SPECS["multilingual-e5-small"]
+    incumbent_artifact_fingerprint = f"sha256:{'e' * 64}"
+    incumbent_backend, incumbent_backend_version = acceptance.embedding_backend(incumbent_spec)
+    incumbent_config_id = acceptance._legacy_e5_config_hash(
+        incumbent_spec,
+        backend=incumbent_backend,
+        backend_version=incumbent_backend_version,
+        corpus_revision=corpus_revision,
+        artifact_fingerprint=incumbent_artifact_fingerprint,
+    )
+    incumbent_vector_table = f"text_windows_{incumbent_config_id[:16]}"
+    incumbent_metrics = {name: 0.9 for name in acceptance.SEMANTIC_UPGRADE_METRICS}
+    incumbent_evaluation = _legacy_e5_evaluation_fixture(
+        acceptance,
+        _spot_semantic_evaluation_fixture(
+            acceptance,
+            config_id=incumbent_config_id,
+            vector_table=incumbent_vector_table,
+            window_count=len(window_ids),
+            corpus_revision=corpus_revision,
+            held_revision=held_revision,
+            development_revision=development_revision,
+            held_metric_value=0.9,
+        ),
+    )
+    incumbent_audit = _semantic_config_audit_fixture(
+        acceptance,
+        spec=incumbent_spec,
+        accepted_evaluation=incumbent_evaluation,
+        artifact_fingerprint=incumbent_artifact_fingerprint,
+        corpus_revision=corpus_revision,
+    )
+    incumbent_audit["selected_model"] = acceptance._legacy_e5_model_identity(incumbent_spec)
+    incumbent_audit["embedding_implementation"] = acceptance._legacy_e5_embedding_implementation(
+        incumbent_spec
+    )
+    incumbent_audit["model_selection"] = "explicit_config"
+    accepted_evaluation = _spot_semantic_evaluation_fixture(
+        acceptance,
+        config_id=config_id,
+        vector_table=vector_table_name,
+        window_count=len(window_ids),
+        corpus_revision=corpus_revision,
+        held_revision=held_revision,
+        development_revision=development_revision,
+        incumbent_metrics=incumbent_metrics,
+    )
+    semantic_audit = _semantic_config_audit_fixture(
+        acceptance,
+        spec=spec,
+        accepted_evaluation=accepted_evaluation,
+        artifact_fingerprint=artifact_fingerprint,
+        corpus_revision=corpus_revision,
+    )
+
+    def audit_json(evaluation: Mapping[str, object]) -> str:
+        return json.dumps(
+            {
+                **semantic_audit,
+                "accepted_semantic_ir_evaluation": dict(evaluation),
+            }
+        )
+
     with engine.begin() as connection:
         connection.execute(
             text(
@@ -2099,7 +2840,36 @@ def test_semantic_integrity_requires_exact_active_membership_and_lance_id_sets(
                     model_revision, dimensions, distance_metric, document_prefix,
                     query_prefix, vector_table, window_version, window_count, audit_json
                 ) VALUES (
-                    :id, 1, 'ready', 'fixture', '1', :model_name,
+                    :id, 0, 'ready', :backend, :backend_version, :model_name,
+                    :model_revision, :dimensions, 'cosine', :document_prefix,
+                    :query_prefix, :vector_table, :window_version, :window_count, :audit_json
+                )
+                """
+            ),
+            {
+                "id": incumbent_config_id,
+                "backend": incumbent_backend,
+                "backend_version": incumbent_backend_version,
+                "model_name": incumbent_spec.model_name,
+                "model_revision": incumbent_spec.model_revision,
+                "dimensions": incumbent_spec.dimensions,
+                "document_prefix": incumbent_spec.document_prefix,
+                "query_prefix": incumbent_spec.query_prefix,
+                "vector_table": incumbent_vector_table,
+                "window_version": acceptance.SEARCH_WINDOW_VERSION,
+                "window_count": len(window_ids),
+                "audit_json": json.dumps(incumbent_audit),
+            },
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO semantic_index_configs (
+                    id, active, status, backend, backend_version, model_name,
+                    model_revision, dimensions, distance_metric, document_prefix,
+                    query_prefix, vector_table, window_version, window_count, audit_json
+                ) VALUES (
+                    :id, 1, 'ready', :backend, :backend_version, :model_name,
                     :model_revision, :dimensions, 'cosine', :document_prefix,
                     :query_prefix, :vector_table, :window_version, :window_count, :audit_json
                 )
@@ -2107,6 +2877,8 @@ def test_semantic_integrity_requires_exact_active_membership_and_lance_id_sets(
             ),
             {
                 "id": config_id,
+                "backend": backend,
+                "backend_version": backend_version,
                 "model_name": spec.model_name,
                 "model_revision": spec.model_revision,
                 "dimensions": spec.dimensions,
@@ -2115,7 +2887,7 @@ def test_semantic_integrity_requires_exact_active_membership_and_lance_id_sets(
                 "vector_table": vector_table_name,
                 "window_version": acceptance.SEARCH_WINDOW_VERSION,
                 "window_count": len(window_ids),
-                "audit_json": json.dumps({"accepted_semantic_ir_evaluation": accepted_evaluation}),
+                "audit_json": audit_json(accepted_evaluation),
             },
         )
         connection.execute(
@@ -2152,6 +2924,34 @@ def test_semantic_integrity_requires_exact_active_membership_and_lance_id_sets(
         return real_lance_table_names(database, page_size=1)
 
     monkeypatch.setattr(acceptance, "lance_table_names", paginated_lance_table_names)
+    artifact_fingerprint_calls = 0
+    if spec.provider == acceptance.FASTEMBED_PROVIDER:
+        pinned_fastembed = acceptance.PINNED_FASTEMBED_ARTIFACTS[spec.alias]
+        expected_artifact = (
+            layout.models / "fastembed",
+            pinned_fastembed.repository,
+            pinned_fastembed.revision,
+        )
+    else:
+        assert spec.provider == acceptance.TRANSFORMERS_PROVIDER
+        expected_artifact = (
+            layout.models / "transformers",
+            spec.model_name,
+            spec.model_revision,
+        )
+
+    def pinned_artifact(
+        cache_dir: Path,
+        *,
+        model_name: str,
+        model_revision: str,
+    ) -> SimpleNamespace:
+        nonlocal artifact_fingerprint_calls
+        artifact_fingerprint_calls += 1
+        assert (cache_dir, model_name, model_revision) == expected_artifact
+        return SimpleNamespace(fingerprint_sha256="a" * 64)
+
+    monkeypatch.setattr(acceptance, "pinned_transformers_artifact", pinned_artifact)
 
     def active_check() -> tuple[Any, dict[str, object]]:
         _checkpoint_catalog(engine)
@@ -2173,6 +2973,7 @@ def test_semantic_integrity_requires_exact_active_membership_and_lance_id_sets(
     valid_check, valid_report = active_check()
     assert valid_check.status == "pass", json.dumps(valid_report, sort_keys=True)
     assert lance_inventory_calls == 1
+    assert artifact_fingerprint_calls == 1
     assert valid_report["exact_id_sets_reconcile"] is True
     assert valid_report["membership_windows"] == len(window_ids)
     assert valid_report["held_out_feedback_used"] is True
@@ -2276,9 +3077,7 @@ def test_semantic_integrity_requires_exact_active_membership_and_lance_id_sets(
                 """
             ),
             {
-                "audit_json": json.dumps(
-                    {"accepted_semantic_ir_evaluation": (evaluation_without_development_gate)}
-                ),
+                "audit_json": audit_json(evaluation_without_development_gate),
                 "config_id": config_id,
             },
         )
@@ -2295,7 +3094,7 @@ def test_semantic_integrity_requires_exact_active_membership_and_lance_id_sets(
                 """
             ),
             {
-                "audit_json": json.dumps({"accepted_semantic_ir_evaluation": accepted_evaluation}),
+                "audit_json": audit_json(accepted_evaluation),
                 "config_id": config_id,
             },
         )
@@ -2314,9 +3113,7 @@ def test_semantic_integrity_requires_exact_active_membership_and_lance_id_sets(
                 """
             ),
             {
-                "audit_json": json.dumps(
-                    {"accepted_semantic_ir_evaluation": (evaluation_with_failed_development_gate)}
-                ),
+                "audit_json": audit_json(evaluation_with_failed_development_gate),
                 "config_id": config_id,
             },
         )
@@ -2333,7 +3130,7 @@ def test_semantic_integrity_requires_exact_active_membership_and_lance_id_sets(
                 """
             ),
             {
-                "audit_json": json.dumps({"accepted_semantic_ir_evaluation": accepted_evaluation}),
+                "audit_json": audit_json(accepted_evaluation),
                 "config_id": config_id,
             },
         )
@@ -2359,9 +3156,7 @@ def test_semantic_integrity_requires_exact_active_membership_and_lance_id_sets(
                 """
             ),
             {
-                "audit_json": json.dumps(
-                    {"accepted_semantic_ir_evaluation": evaluation_without_held_out}
-                ),
+                "audit_json": audit_json(evaluation_without_held_out),
                 "config_id": config_id,
             },
         )
@@ -2379,7 +3174,7 @@ def test_semantic_integrity_requires_exact_active_membership_and_lance_id_sets(
                 """
             ),
             {
-                "audit_json": json.dumps({"accepted_semantic_ir_evaluation": accepted_evaluation}),
+                "audit_json": audit_json(accepted_evaluation),
                 "config_id": config_id,
             },
         )
@@ -2439,8 +3234,16 @@ def test_semantic_hybrid_and_conflict_user_stories_require_live_results_and_memb
                 )
             ).scalar_one()
         )
-    spec = next(iter(acceptance.SEMANTIC_MODEL_SPECS.values()))
-    config_id = "real-acceptance-search-story-fixture"
+    spec = acceptance.SEMANTIC_MODEL_SPECS[acceptance.AUTO_EMBEDDING_MODEL_ALIAS]
+    artifact_fingerprint = f"sha256:{'f' * 64}"
+    corpus_revision = "c" * 64
+    backend, backend_version = acceptance.embedding_backend(spec)
+    config_id = acceptance.embedding_config_hash(
+        spec,
+        corpus_revision=corpus_revision,
+        artifact_fingerprint=artifact_fingerprint,
+    )
+    vector_table = f"text_windows_{config_id[:16]}"
     with engine.begin() as connection:
         connection.execute(
             text(
@@ -2450,19 +3253,22 @@ def test_semantic_hybrid_and_conflict_user_stories_require_live_results_and_memb
                     model_revision, dimensions, distance_metric, document_prefix,
                     query_prefix, vector_table, window_version, window_count, audit_json
                 ) VALUES (
-                    :id, 1, 'ready', 'fixture', '1', :model_name,
+                    :id, 1, 'ready', :backend, :backend_version, :model_name,
                     :model_revision, :dimensions, 'cosine', :document_prefix,
-                    :query_prefix, 'search_story_fixture', :window_version, 1, '{}'
+                    :query_prefix, :vector_table, :window_version, 1, '{}'
                 )
                 """
             ),
             {
                 "id": config_id,
+                "backend": backend,
+                "backend_version": backend_version,
                 "model_name": spec.model_name,
                 "model_revision": spec.model_revision,
                 "dimensions": spec.dimensions,
                 "document_prefix": spec.document_prefix,
                 "query_prefix": spec.query_prefix,
+                "vector_table": vector_table,
                 "window_version": acceptance.SEARCH_WINDOW_VERSION,
             },
         )
@@ -2557,19 +3363,30 @@ def test_semantic_hybrid_and_conflict_user_stories_require_live_results_and_memb
             },
         },
     }
+    accepted_evaluation = {
+        "candidate": {
+            "config_hash": config_id,
+            "vector_table": vector_table,
+            "window_count": 1,
+            "distance_metric": "cosine",
+            "corpus_revision": corpus_revision,
+        },
+        "production_acceptance_passed": True,
+        "direct_conflict_development_calibration": development_calibration,
+    }
+    semantic_audit = _semantic_config_audit_fixture(
+        acceptance,
+        spec=spec,
+        accepted_evaluation=accepted_evaluation,
+        artifact_fingerprint=artifact_fingerprint,
+        corpus_revision=corpus_revision,
+    )
     with engine.begin() as connection:
         connection.execute(
             text("UPDATE semantic_index_configs SET audit_json = :audit_json WHERE id = :id"),
             {
                 "id": config_id,
-                "audit_json": json.dumps(
-                    {
-                        "accepted_semantic_ir_evaluation": {
-                            "production_acceptance_passed": True,
-                            "direct_conflict_development_calibration": development_calibration,
-                        }
-                    }
-                ),
+                "audit_json": json.dumps(semantic_audit),
             },
         )
     _checkpoint_catalog(engine)
@@ -2578,7 +3395,7 @@ def test_semantic_hybrid_and_conflict_user_stories_require_live_results_and_memb
         "model_name": spec.model_name,
         "model_revision": spec.model_revision,
         "window_version": acceptance.SEARCH_WINDOW_VERSION,
-        "artifact_fingerprint": "sha256:fixture",
+        "artifact_fingerprint": artifact_fingerprint,
         "embedding_implementation": acceptance.embedding_implementation_identity(spec),
         "reranker": reranker,
         "ranking_pipeline": acceptance.DIRECT_CONFLICT_RANKING_PIPELINE_VERSION,

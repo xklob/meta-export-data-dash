@@ -7,6 +7,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -691,6 +692,36 @@ class SavedSearch(Base, TimestampMixin):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     name: Mapped[str] = mapped_column(String(160), nullable=False, unique=True)
     query_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class Star(Base):
+    """A durable user bookmark for one stable archive identity.
+
+    Target foreign keys are intentionally omitted. Importers replace deterministic
+    catalog rows transactionally, and a cascading foreign key would erase a star
+    during that replacement instead of reconnecting it to the recreated identity.
+    """
+
+    __tablename__ = "stars"
+    __table_args__ = (
+        CheckConstraint(
+            "target_type IN ("
+            "'conversation', 'message', 'activity', 'attachment', 'blob', "
+            "'messenger_contact'"
+            ")",
+            name="ck_stars_target_type",
+        ),
+        UniqueConstraint("target_type", "target_id", name="uq_stars_target"),
+        Index("ix_stars_starred_at_id", "starred_at", "id"),
+        Index("ix_stars_target_type_starred_at_id", "target_type", "starred_at", "id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    target_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    starred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.current_timestamp(), nullable=False
+    )
 
 
 class RelevanceFeedback(Base):

@@ -3,6 +3,7 @@ import { Images, Info, MessageSquareText, Search, UserRoundCheck, Users, Video }
 import { useEffect, useMemo, useState } from 'react'
 import { CoverageNotice } from '../components/CoverageNotice'
 import { CursorWindowControls } from '../components/CursorWindowControls'
+import { StarButton } from '../components/StarButton'
 import { EmptyState, ErrorState, MetricCard, PageHeading, PageLoading, StatusBadge } from '../components/ui'
 import { api, type PeopleQuery } from '../lib/api'
 import type { PersonItem, SortDirection } from '../lib/contracts'
@@ -42,8 +43,19 @@ function useCompactPeopleWindow() {
 
 function ContactCard({ person, timezone }: { person: PersonItem; timezone: string }) {
   const counts = person.direct_counts ?? person.counts
+  const target = person.star_target ?? (
+    person.contact_basis === 'messenger_participant_label'
+      ? { target_type: 'messenger_contact' as const, target_id: person.id }
+      : { target_type: 'activity' as const, target_id: person.id }
+  )
+  const anchorId = target.target_type === 'messenger_contact'
+    ? `contact-${target.target_id}`
+    : `relationship-${person.id}`
   return (
-    <article className="person-card" id={`relationship-${person.id}`}>
+    <article className="person-card" id={anchorId}>
+      {anchorId !== `relationship-${person.id}` ? (
+        <span id={`relationship-${person.id}`} className="sr-only" aria-hidden="true" />
+      ) : null}
       <header className="person-card__header">
         <span className="person-avatar" aria-hidden="true">
           {(person.name || '?').slice(0, 1).toLocaleUpperCase()}
@@ -56,7 +68,10 @@ function ContactCard({ person, timezone }: { person: PersonItem; timezone: strin
               : sentenceCase(person.status)}
           </p>
         </div>
-        <StatusBadge status={person.friendship_status ?? person.status ?? 'unknown'} />
+        <span className="person-card__actions">
+          <StatusBadge status={person.friendship_status ?? person.status ?? 'unknown'} />
+          <StarButton target={target} star={person.star} label={`person ${person.name || 'Unnamed record'}`} />
+        </span>
       </header>
 
       {counts ? (

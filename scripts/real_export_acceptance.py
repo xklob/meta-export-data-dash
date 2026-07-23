@@ -91,6 +91,7 @@ from meta_archive.services.media_derivatives import (
 )
 from meta_archive.services.media_derivatives import _candidates as media_derivative_candidates
 from meta_archive.services.media_derivatives import derivative_id
+from meta_archive.services.model_cache import pinned_transformers_artifact
 from meta_archive.services.nlp_annotations import (
     CONFLICT_PIPELINE_VERSION,
     DIRECT_PROVENANCE_BINDING,
@@ -107,11 +108,30 @@ from meta_archive.services.nlp_annotations import (
 )
 from meta_archive.services.reranking import DEFAULT_RERANKER_SPEC
 from meta_archive.services.search_index import (
+    AUTO_EMBEDDING_MODEL_ALIAS,
+    DIRECT_CONFLICT_LITERAL_REGRESSION_NOT_RELEVANT_COUNT,
+    DIRECT_CONFLICT_LITERAL_REGRESSION_RELEVANT_COUNT,
+    DIRECT_CONFLICT_LITERAL_REGRESSION_REVIEWED_COUNT,
+    FASTEMBED_PROVIDER,
+    FEEDBACK_JUDGMENT_CAP_PER_QUERY,
+    FEEDBACK_QUERY_CAP,
     HELD_OUT_MIN_QUERY_COUNT,
     HELD_OUT_THRESHOLDS,
+    KNOWN_ITEM_QUERY_CAP,
     KNOWN_ITEM_THRESHOLDS,
+    PINNED_FASTEMBED_ARTIFACTS,
+    PREVIOUS_SEMANTIC_IR_EVALUATOR_VERSION,
+    SEMANTIC_CANDIDATE_RECALL_KS,
     SEMANTIC_IR_EVALUATOR_VERSION,
     SEMANTIC_IR_K,
+    SEMANTIC_MODEL_SELECTION_POLICY,
+    SEMANTIC_RANKING_PIPELINE_VERSION,
+    SEMANTIC_UPGRADE_DEMONSTRATED_IMPROVEMENT,
+    SEMANTIC_UPGRADE_METRICS,
+    SEMANTIC_UPGRADE_NON_REGRESSION_TOLERANCE,
+    TRANSFORMERS_PROVIDER,
+    embedding_backend,
+    embedding_config_hash,
     embedding_implementation_identity,
     held_out_feedback_revision,
 )
@@ -139,6 +159,7 @@ from meta_archive.services.verification import (
 
 REPORT_SCHEMA_VERSION = 2
 BROWSER_REPORT_SCHEMA_VERSION = 5
+LEGACY_SEMANTIC_IR_EVALUATOR_VERSION = "semantic-ir-acceptance-v6"
 BROWSER_INTERACTION_PROOF_METRIC_MAX = 100
 DIRECT_CONFLICT_DEVELOPMENT_EVIDENCE_KIND = "conversation_grouped_development_calibration"
 DIRECT_CONFLICT_DEVELOPMENT_BENCHMARK_KIND = "literal_direct_conflict_development"
@@ -212,6 +233,7 @@ EXPECTED_BROWSER_ROUTES = (
     "settings",
     "conversations",
     "media",
+    "starred",
     "search",
     "enrichment",
     "people",
@@ -3673,20 +3695,32 @@ def _search_result_jump_is_valid(connection: Any, item: Mapping[str, object]) ->
 def _search_config_is_current(payload: object, active_config: Any | None) -> bool:
     config = _json_object(payload)
     reranker = _json_object(config.get("reranker"))
+    active_audit = (
+        _database_json_object(getattr(active_config, "audit_json", None))
+        if active_config is not None
+        else None
+    ) or {}
+    production_spec = SEMANTIC_MODEL_SPECS.get(AUTO_EMBEDDING_MODEL_ALIAS)
     matching_specs = [
         spec
-        for spec in SEMANTIC_MODEL_SPECS.values()
+        for spec in (production_spec,)
+        if spec is not None
         if active_config is not None
         and spec.model_name == active_config.model_name
         and spec.model_revision == active_config.model_revision
     ]
+    active_provenance_current = bool(
+        active_config is not None and _production_semantic_config_provenance(active_config)[0]
+    )
     return bool(
         active_config is not None
         and len(matching_specs) == 1
+        and active_provenance_current
         and config.get("id") == active_config.id
         and config.get("model_name") == active_config.model_name
         and config.get("model_revision") == active_config.model_revision
         and config.get("window_version") == active_config.window_version
+        and config.get("artifact_fingerprint") == active_audit.get("artifact_fingerprint")
         and isinstance(config.get("artifact_fingerprint"), str)
         and bool(config["artifact_fingerprint"])
         and config.get("embedding_implementation")
@@ -3700,6 +3734,1084 @@ def _search_config_is_current(payload: object, active_config: Any | None) -> boo
         and reranker.get("max_sequence_tokens") == DEFAULT_RERANKER_SPEC.max_sequence_tokens
         and reranker.get("status") not in {None, "not_loaded", "unavailable"}
     )
+
+
+def _independent_embedding_artifact_fingerprint(
+    layout: ArchiveLayout,
+    spec: Any,
+) -> str | None:
+    """Hash the exact pinned cache tree for a supported production embedding provider."""
+
+    if getattr(spec, "provider", None) == TRANSFORMERS_PROVIDER:
+        cache_dir = layout.models / "transformers"
+        model_name = getattr(spec, "model_name", None)
+        model_revision = getattr(spec, "model_revision", None)
+    elif getattr(spec, "provider", None) == FASTEMBED_PROVIDER:
+        artifact_spec = PINNED_FASTEMBED_ARTIFACTS.get(getattr(spec, "alias", ""))
+        if artifact_spec is None or artifact_spec.revision != getattr(spec, "model_revision", None):
+            return None
+        cache_dir = layout.models / "fastembed"
+        model_name = artifact_spec.repository
+        model_revision = artifact_spec.revision
+    else:
+        return None
+    if not (
+        isinstance(model_name, str)
+        and bool(model_name)
+        and isinstance(model_revision, str)
+        and bool(model_revision)
+    ):
+        return None
+    artifact = pinned_transformers_artifact(
+        cache_dir,
+        model_name=model_name,
+        model_revision=model_revision,
+    )
+    fingerprint = f"sha256:{artifact.fingerprint_sha256}"
+    return fingerprint if re.fullmatch(r"sha256:[0-9a-f]{64}", fingerprint) else None
+
+
+def _production_semantic_config_provenance(
+    config: Any,
+    *,
+    independently_recomputed_artifact_fingerprint: str | None = None,
+    require_independent_artifact_fingerprint: bool = False,
+) -> tuple[bool, dict[str, object]]:
+    """Bind final acceptance to the pinned automatic model and vector implementation."""
+
+    spec = SEMANTIC_MODEL_SPECS.get(AUTO_EMBEDDING_MODEL_ALIAS)
+    report: dict[str, object] = {
+        "required_model_alias": AUTO_EMBEDDING_MODEL_ALIAS,
+        "required_model_registered": spec is not None,
+        "model_identity_current": False,
+        "backend_identity_current": False,
+        "selected_model_metadata_current": False,
+        "embedding_implementation_current": False,
+        "artifact_fingerprint_recorded": False,
+        "artifact_fingerprint_independently_verified": False,
+        "artifact_verification_mode": (
+            "full-independent-content-hash"
+            if require_independent_artifact_fingerprint
+            else "bounded-metadata-only-reduced-assurance"
+        ),
+        "corpus_revision_recorded": False,
+        "candidate_corpus_revision_current": False,
+        "candidate_index_binding_current": False,
+        "config_hash_current": False,
+        "vector_table_name_current": False,
+        "index_contract_current": False,
+        "automatic_selection_provenance_current": False,
+        "selection_metadata_mode": None,
+        "private_values_emitted": False,
+    }
+    if spec is None:
+        return False, report
+    audit = _database_json_object(getattr(config, "audit_json", None)) or {}
+    artifact_fingerprint = audit.get("artifact_fingerprint")
+    corpus_revision = audit.get("corpus_revision")
+    artifact_valid = bool(
+        isinstance(artifact_fingerprint, str)
+        and re.fullmatch(r"sha256:[0-9a-f]{64}", artifact_fingerprint)
+    )
+    independent_artifact_current = bool(
+        artifact_valid
+        and independently_recomputed_artifact_fingerprint is not None
+        and independently_recomputed_artifact_fingerprint == artifact_fingerprint
+    )
+    corpus_valid = bool(
+        isinstance(corpus_revision, str) and re.fullmatch(r"[0-9a-f]{64}", corpus_revision)
+    )
+    accepted = _json_object(audit.get("accepted_semantic_ir_evaluation"))
+    accepted_candidate = _json_object(accepted.get("candidate"))
+    candidate_corpus_current = bool(
+        corpus_valid and accepted_candidate.get("corpus_revision") == corpus_revision
+    )
+    expected_backend, expected_backend_version = embedding_backend(spec)
+    model_identity_current = bool(
+        getattr(config, "model_name", None) == spec.model_name
+        and getattr(config, "model_revision", None) == spec.model_revision
+        and getattr(config, "dimensions", None) == spec.dimensions
+        and getattr(config, "document_prefix", None) == spec.document_prefix
+        and getattr(config, "query_prefix", None) == spec.query_prefix
+    )
+    backend_identity_current = bool(
+        getattr(config, "backend", None) == expected_backend
+        and getattr(config, "backend_version", None) == expected_backend_version
+    )
+    selected_model_current = audit.get("selected_model") == asdict(spec)
+    implementation_current = audit.get(
+        "embedding_implementation"
+    ) == embedding_implementation_identity(spec)
+    config_hash_current = False
+    expected_config_id: str | None = None
+    if artifact_valid and corpus_valid:
+        expected_config_id = embedding_config_hash(
+            spec,
+            corpus_revision=cast(str, corpus_revision),
+            artifact_fingerprint=cast(str, artifact_fingerprint),
+        )
+        config_hash_current = getattr(config, "id", None) == expected_config_id
+    vector_table_current = bool(
+        expected_config_id is not None
+        and getattr(config, "vector_table", None) == f"text_windows_{expected_config_id[:16]}"
+    )
+    index_contract_current = bool(
+        getattr(config, "distance_metric", None) == "cosine"
+        and getattr(config, "window_version", None) == SEARCH_WINDOW_VERSION
+        and isinstance(getattr(config, "window_count", None), int)
+        and not isinstance(getattr(config, "window_count", None), bool)
+        and int(config.window_count) >= 0
+    )
+    candidate_index_binding_current = bool(
+        expected_config_id is not None
+        and candidate_corpus_current
+        and accepted_candidate.get("config_hash") == expected_config_id
+        and accepted_candidate.get("vector_table") == getattr(config, "vector_table", None)
+        and accepted_candidate.get("window_count") == getattr(config, "window_count", None)
+        and accepted_candidate.get("distance_metric") == "cosine"
+    )
+    language_audit = _json_object(audit.get("language_audit"))
+    automatic_selection_current = bool(
+        audit.get("recommended_model") == AUTO_EMBEDDING_MODEL_ALIAS
+        and audit.get("model_selection") in {"automatic_default", "explicit_config"}
+        and language_audit.get("recommended_model") == AUTO_EMBEDDING_MODEL_ALIAS
+        and language_audit.get("selection_policy") == SEMANTIC_MODEL_SELECTION_POLICY
+        and language_audit.get("threshold_used_for_selection") is False
+    )
+    report.update(
+        {
+            "model_identity_current": model_identity_current,
+            "backend_identity_current": backend_identity_current,
+            "selected_model_metadata_current": selected_model_current,
+            "embedding_implementation_current": implementation_current,
+            "artifact_fingerprint_recorded": artifact_valid,
+            "artifact_fingerprint_independently_verified": independent_artifact_current,
+            "corpus_revision_recorded": corpus_valid,
+            "candidate_corpus_revision_current": candidate_corpus_current,
+            "candidate_index_binding_current": candidate_index_binding_current,
+            "config_hash_current": config_hash_current,
+            "vector_table_name_current": vector_table_current,
+            "index_contract_current": index_contract_current,
+            "automatic_selection_provenance_current": automatic_selection_current,
+            "selection_metadata_mode": "current" if automatic_selection_current else None,
+        }
+    )
+    return bool(
+        model_identity_current
+        and backend_identity_current
+        and selected_model_current
+        and implementation_current
+        and artifact_valid
+        and (
+            independent_artifact_current
+            if require_independent_artifact_fingerprint
+            else independently_recomputed_artifact_fingerprint is None
+            or independent_artifact_current
+        )
+        and corpus_valid
+        and candidate_corpus_current
+        and candidate_index_binding_current
+        and config_hash_current
+        and vector_table_current
+        and index_contract_current
+        and automatic_selection_current
+    ), report
+
+
+def _legacy_e5_model_identity(spec: Any) -> dict[str, object]:
+    """Return the exact historical model payload used to hash the E5 incumbent."""
+
+    return {
+        "alias": spec.alias,
+        "model_name": spec.model_name,
+        "model_revision": spec.model_revision,
+        "dimensions": spec.dimensions,
+        "document_prefix": spec.document_prefix,
+        "query_prefix": spec.query_prefix,
+        "language_scope": spec.language_scope,
+        "approximate_download_gb": spec.approximate_download_gb,
+    }
+
+
+def _legacy_e5_embedding_implementation(spec: Any) -> dict[str, object]:
+    return {
+        "pipeline_version": "semantic-text-embedding-v1",
+        "document_prefix": spec.document_prefix,
+        "query_prefix": spec.query_prefix,
+        "normalization": "l2",
+        "provider": "transformers",
+        "device": "cpu",
+        "precision": "float32",
+        "pooling": "attention-mask-mean",
+        "max_sequence_tokens": 512,
+        "truncation": True,
+    }
+
+
+def _legacy_e5_config_hash(
+    spec: Any,
+    *,
+    backend: str,
+    backend_version: str,
+    corpus_revision: str,
+    artifact_fingerprint: str,
+) -> str:
+    payload = {
+        "backend": backend,
+        "backend_version": backend_version,
+        "embedding_implementation": _legacy_e5_embedding_implementation(spec),
+        "model": _legacy_e5_model_identity(spec),
+        "window_version": SEARCH_WINDOW_VERSION,
+        "distance": "cosine",
+        "corpus_revision": corpus_revision,
+        "artifact_fingerprint": artifact_fingerprint,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _semantic_metric_value_valid(value: object) -> bool:
+    return bool(
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(float(value))
+        and 0.0 <= float(value) <= 1.0
+    )
+
+
+def _semantic_retrieval_metrics_valid(
+    value: object,
+    *,
+    query_count: int,
+) -> bool:
+    metrics = _json_object(value)
+    recorded_query_count = metrics.get("query_count")
+    return bool(
+        set(metrics) == {"query_count", "k", "recall_at_k", "mrr", "ndcg_at_k"}
+        and isinstance(recorded_query_count, int)
+        and not isinstance(recorded_query_count, bool)
+        and recorded_query_count == query_count
+        and metrics.get("k") == SEMANTIC_IR_K
+        and all(
+            _semantic_metric_value_valid(metrics.get(name))
+            for name in ("recall_at_k", "mrr", "ndcg_at_k")
+        )
+    )
+
+
+def _semantic_candidate_recall_valid(
+    value: object,
+    *,
+    query_count: int,
+) -> bool:
+    metrics = _json_object(value)
+    recorded_query_count = metrics.get("query_count")
+    expected_keys = {
+        "query_count",
+        *(f"recall_at_{k}" for k in SEMANTIC_CANDIDATE_RECALL_KS),
+    }
+    if set(metrics) != expected_keys:
+        return False
+    recalls: list[float] = []
+    for k in SEMANTIC_CANDIDATE_RECALL_KS:
+        recall = metrics.get(f"recall_at_{k}")
+        if not _semantic_metric_value_valid(recall):
+            return False
+        recalls.append(float(cast(int | float, recall)))
+    return bool(
+        isinstance(recorded_query_count, int)
+        and not isinstance(recorded_query_count, bool)
+        and recorded_query_count == query_count
+        and all(later >= earlier for earlier, later in pairwise(recalls))
+    )
+
+
+def _semantic_weighted_metrics_reconcile(
+    aggregate_value: object,
+    by_mode_value: object,
+    mode_counts_value: object,
+    *,
+    metric_names: Sequence[str],
+) -> bool:
+    aggregate = _json_object(aggregate_value)
+    by_mode = _json_object(by_mode_value)
+    mode_counts = _json_object(mode_counts_value)
+    query_count = aggregate.get("query_count")
+    if not (
+        isinstance(query_count, int)
+        and not isinstance(query_count, bool)
+        and query_count > 0
+        and set(by_mode) == {"semantic", "hybrid"}
+        and set(mode_counts) == {"semantic", "hybrid"}
+    ):
+        return False
+    for name in metric_names:
+        aggregate_metric = aggregate.get(name)
+        if not _semantic_metric_value_valid(aggregate_metric):
+            return False
+        weighted_sum = 0.0
+        for mode in ("semantic", "hybrid"):
+            count = mode_counts.get(mode)
+            mode_metric = _json_object(by_mode.get(mode)).get(name)
+            if not (
+                isinstance(count, int)
+                and not isinstance(count, bool)
+                and count >= 0
+                and _semantic_metric_value_valid(mode_metric)
+            ):
+                return False
+            weighted_sum += count * float(cast(int | float, mode_metric))
+        if not math.isclose(
+            float(cast(int | float, aggregate_metric)),
+            weighted_sum / query_count,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ):
+            return False
+    return True
+
+
+def _semantic_incumbent_comparison_valid(value: object) -> bool:
+    comparison = _json_object(value)
+    required = comparison.get("required_for_activation")
+    common = bool(
+        isinstance(required, bool)
+        and comparison.get("non_regression_tolerance") == SEMANTIC_UPGRADE_NON_REGRESSION_TOLERANCE
+        and comparison.get("demonstrated_improvement_threshold")
+        == SEMANTIC_UPGRADE_DEMONSTRATED_IMPROVEMENT
+        and comparison.get("demonstrated_improvement_required") is required
+    )
+    if not common:
+        return False
+    if required is False:
+        reason_codes = comparison.get("reason_codes")
+        known_reason_codes = {
+            "multiple_active_incumbents",
+            "accepted_evidence_missing",
+            "corpus_revision_mismatch",
+            "feedback_revision_mismatch",
+            "query_count_mismatch",
+            "ranking_pipeline_mismatch",
+            "reranker_spec_mismatch",
+            "incumbent_held_out_not_accepted",
+            "incumbent_metrics_invalid",
+            "candidate_metrics_invalid",
+        }
+        no_incumbent = (
+            comparison.get("status") == "not_required_no_different_active_incumbent"
+            and reason_codes == []
+        )
+        incomparable = bool(
+            comparison.get("status") == "not_required_incomparable_incumbent"
+            and isinstance(reason_codes, list)
+            and bool(reason_codes)
+            and all(isinstance(code, str) and code in known_reason_codes for code in reason_codes)
+            and len(reason_codes) == len(set(cast(list[str], reason_codes)))
+        )
+        return bool(
+            (no_incumbent or incomparable)
+            and comparison.get("passed") is None
+            and comparison.get("demonstrated_improvement") is None
+        )
+    metric_rows = _json_object(comparison.get("metrics"))
+    demonstrated: list[bool] = []
+    for name in SEMANTIC_UPGRADE_METRICS:
+        row = _json_object(metric_rows.get(name))
+        candidate = row.get("candidate")
+        incumbent = row.get("incumbent")
+        delta = row.get("delta")
+        if not (
+            _semantic_metric_value_valid(candidate)
+            and _semantic_metric_value_valid(incumbent)
+            and isinstance(delta, (int, float))
+            and not isinstance(delta, bool)
+            and math.isfinite(float(delta))
+        ):
+            return False
+        candidate_value = float(cast(int | float, candidate))
+        incumbent_value = float(cast(int | float, incumbent))
+        delta_value = float(delta)
+        expected_regression = bool(
+            incumbent_value - candidate_value > SEMANTIC_UPGRADE_NON_REGRESSION_TOLERANCE
+            and not math.isclose(
+                incumbent_value - candidate_value,
+                SEMANTIC_UPGRADE_NON_REGRESSION_TOLERANCE,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+        )
+        expected_improvement = bool(
+            delta_value > SEMANTIC_UPGRADE_DEMONSTRATED_IMPROVEMENT
+            or math.isclose(
+                delta_value,
+                SEMANTIC_UPGRADE_DEMONSTRATED_IMPROVEMENT,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+        )
+        if not (
+            math.isclose(
+                delta_value,
+                candidate_value - incumbent_value,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+            and row.get("regression_exceeds_tolerance") is expected_regression
+            and expected_regression is False
+            and row.get("demonstrated_improvement") is expected_improvement
+        ):
+            return False
+        demonstrated.append(expected_improvement)
+    return bool(
+        comparison.get("status") == "passed"
+        and comparison.get("passed") is True
+        and comparison.get("demonstrated_improvement") is True
+        and any(demonstrated)
+        and set(metric_rows) == set(SEMANTIC_UPGRADE_METRICS)
+    )
+
+
+def _semantic_v7_evidence(
+    accepted: Mapping[str, object],
+) -> tuple[bool, dict[str, object]]:
+    """Validate the aggregate-only evaluator-v7 fields used for production activation."""
+
+    candidate = _json_object(accepted.get("candidate"))
+    candidate_window_count_value = candidate.get("window_count")
+    candidate_window_count = (
+        candidate_window_count_value
+        if isinstance(candidate_window_count_value, int)
+        and not isinstance(candidate_window_count_value, bool)
+        and candidate_window_count_value >= 0
+        else -1
+    )
+    candidate_metadata_current = bool(
+        isinstance(candidate.get("corpus_revision"), str)
+        and re.fullmatch(r"[0-9a-f]{64}", cast(str, candidate["corpus_revision"]))
+        and candidate.get("distance_metric") == "cosine"
+        and candidate.get("query_engine") == "lancedb-exact-vector-search"
+        and candidate.get("approximate_index_requested") == (candidate_window_count >= 256)
+        and candidate_window_count >= 0
+    )
+
+    automatic = _json_object(accepted.get("automatic_known_item"))
+    automatic_sampling = _json_object(automatic.get("sampling"))
+    automatic_metrics = _json_object(automatic.get("metrics"))
+    automatic_sampled_count_value = automatic_sampling.get("sampled_query_count")
+    automatic_sampled_count = (
+        automatic_sampled_count_value
+        if isinstance(automatic_sampled_count_value, int)
+        and not isinstance(automatic_sampled_count_value, bool)
+        and automatic_sampled_count_value > 0
+        else -1
+    )
+    automatic_metrics_valid = bool(
+        0 < automatic_sampled_count <= KNOWN_ITEM_QUERY_CAP
+        and _semantic_retrieval_metrics_valid(
+            automatic_metrics,
+            query_count=automatic_sampled_count,
+        )
+        and all(
+            float(cast(int | float, automatic_metrics[name])) >= threshold
+            for name, threshold in KNOWN_ITEM_THRESHOLDS.items()
+        )
+    )
+    automatic_valid = bool(
+        automatic.get("benchmark_kind") == "automatic_known_item"
+        and automatic.get("status") == "passed"
+        and automatic.get("passed") is True
+        and automatic.get("used_for_activation") is True
+        and automatic_sampling.get("method") == "stable-id-prefix-stratified-by-entity-type"
+        and automatic_sampling.get("query_cap") == KNOWN_ITEM_QUERY_CAP
+        and automatic_sampling.get("query_text_persisted") is False
+        and automatic_sampling.get("query_details_persisted") is False
+        and automatic.get("thresholds") == {**KNOWN_ITEM_THRESHOLDS, "k": SEMANTIC_IR_K}
+        and automatic_metrics_valid
+    )
+
+    held_out = _json_object(accepted.get("held_out_feedback"))
+    aggregate_metrics = _json_object(held_out.get("metrics"))
+    query_count_value = aggregate_metrics.get("query_count")
+    query_count = (
+        query_count_value
+        if isinstance(query_count_value, int)
+        and not isinstance(query_count_value, bool)
+        and query_count_value >= 0
+        else -1
+    )
+    mode_counts = _json_object(held_out.get("query_group_counts_by_mode"))
+    mode_counts_valid = bool(
+        set(mode_counts) == {"semantic", "hybrid"}
+        and all(
+            isinstance(mode_counts.get(mode), int)
+            and not isinstance(mode_counts.get(mode), bool)
+            and cast(int, mode_counts[mode]) >= 0
+            for mode in ("semantic", "hybrid")
+        )
+        and sum(cast(int, mode_counts[mode]) for mode in ("semantic", "hybrid")) == query_count
+    )
+    metrics_by_mode = _json_object(held_out.get("metrics_by_mode"))
+    metrics_by_mode_valid = bool(
+        mode_counts_valid
+        and set(metrics_by_mode) == {"semantic", "hybrid"}
+        and all(
+            _semantic_retrieval_metrics_valid(
+                metrics_by_mode.get(mode),
+                query_count=cast(int, mode_counts[mode]),
+            )
+            for mode in ("semantic", "hybrid")
+        )
+    )
+    aggregate_metrics_reconcile = bool(
+        metrics_by_mode_valid
+        and _semantic_weighted_metrics_reconcile(
+            aggregate_metrics,
+            metrics_by_mode,
+            mode_counts,
+            metric_names=("recall_at_k", "mrr", "ndcg_at_k"),
+        )
+    )
+    candidate_recall_valid = _semantic_candidate_recall_valid(
+        held_out.get("cosine_candidate_recall"),
+        query_count=query_count,
+    )
+    recall_by_mode = _json_object(held_out.get("cosine_candidate_recall_by_mode"))
+    candidate_recall_by_mode_valid = bool(
+        mode_counts_valid
+        and set(recall_by_mode) == {"semantic", "hybrid"}
+        and all(
+            _semantic_candidate_recall_valid(
+                recall_by_mode.get(mode),
+                query_count=cast(int, mode_counts[mode]),
+            )
+            for mode in ("semantic", "hybrid")
+        )
+    )
+    candidate_recall_reconciles = bool(
+        candidate_recall_valid
+        and candidate_recall_by_mode_valid
+        and _semantic_weighted_metrics_reconcile(
+            held_out.get("cosine_candidate_recall"),
+            recall_by_mode,
+            mode_counts,
+            metric_names=tuple(f"recall_at_{k}" for k in SEMANTIC_CANDIDATE_RECALL_KS),
+        )
+    )
+    reranker_current = held_out.get("reranker") == asdict(DEFAULT_RERANKER_SPEC)
+    aggregate_metrics_valid = bool(
+        _semantic_retrieval_metrics_valid(
+            aggregate_metrics,
+            query_count=query_count,
+        )
+        and query_count >= HELD_OUT_MIN_QUERY_COUNT
+        and query_count <= FEEDBACK_QUERY_CAP
+        and all(
+            float(cast(int | float, aggregate_metrics[name])) >= threshold
+            for name, threshold in HELD_OUT_THRESHOLDS.items()
+        )
+    )
+    held_out_contract_valid = bool(
+        held_out.get("benchmark_kind") == "held_out_user_feedback"
+        and held_out.get("status") == "passed"
+        and held_out.get("passed") is True
+        and held_out.get("used_for_activation") is True
+        and held_out.get("query_details_persisted") is False
+        and held_out.get("feedback_revision_stable_during_evaluation") is True
+        and isinstance(held_out.get("feedback_revision"), dict)
+        and held_out.get("minimum_query_count_for_activation") == HELD_OUT_MIN_QUERY_COUNT
+        and held_out.get("thresholds") == {**HELD_OUT_THRESHOLDS, "k": SEMANTIC_IR_K}
+        and _json_object(held_out.get("exclusions")).get("without_relevant_window_judgment") == 0
+        and _json_object(held_out.get("exclusions")).get("relevant_target_not_in_candidate") == 0
+    )
+    incumbent_comparison_valid = _semantic_incumbent_comparison_valid(
+        accepted.get("active_incumbent_comparison")
+    )
+    query_details_emitted = any(
+        key in section
+        for section in (automatic, held_out)
+        for key in ("queries", "query_details", "query_groups")
+    )
+    report: dict[str, object] = {
+        "evaluator_version_current": (
+            accepted.get("evaluator_version") == SEMANTIC_IR_EVALUATOR_VERSION
+        ),
+        "top_level_decision_current": (
+            accepted.get("passed") is True
+            and accepted.get("production_acceptance_passed") is True
+            and accepted.get("decision") == "accepted"
+        ),
+        "candidate_metadata_current": candidate_metadata_current,
+        "automatic_evidence_valid": automatic_valid,
+        "held_out_contract_valid": held_out_contract_valid,
+        "ranking_pipeline_current": (
+            held_out.get("ranking_pipeline") == SEMANTIC_RANKING_PIPELINE_VERSION
+        ),
+        "reranker_provenance_current": reranker_current,
+        "evidence_not_truncated": (
+            held_out.get("evidence_truncated") is False
+            and held_out.get("query_selection_truncated") is False
+            and held_out.get("judgments_truncated") is False
+        ),
+        "evidence_caps_current": (
+            held_out.get("query_cap") == FEEDBACK_QUERY_CAP
+            and held_out.get("judgment_cap_per_query") == FEEDBACK_JUDGMENT_CAP_PER_QUERY
+        ),
+        "aggregate_metrics_valid": aggregate_metrics_valid,
+        "search_mode_schema_valid": mode_counts_valid,
+        "metrics_by_mode_valid": metrics_by_mode_valid,
+        "aggregate_metrics_reconcile_by_mode": aggregate_metrics_reconcile,
+        "cosine_candidate_recall_valid": candidate_recall_valid,
+        "cosine_candidate_recall_by_mode_valid": candidate_recall_by_mode_valid,
+        "cosine_candidate_recall_reconciles_by_mode": candidate_recall_reconciles,
+        "active_incumbent_comparison_valid": incumbent_comparison_valid,
+        "query_count": query_count if query_count >= 0 else None,
+        "query_details_emitted": query_details_emitted,
+    }
+    passed = bool(
+        not query_details_emitted
+        and all(
+            value is True
+            for key, value in report.items()
+            if key not in {"query_count", "query_details_emitted"}
+        )
+    )
+    return passed, report
+
+
+def _complete_direct_conflict_evidence(
+    development_value: object,
+    *,
+    current_revision: Mapping[str, object],
+) -> tuple[bool, dict[str, object]]:
+    development = _json_object(development_value)
+    grouped = _json_object(development.get("grouped_cross_validation"))
+    minimum_metrics = _json_object(grouped.get("minimum_metrics"))
+    mean_metrics = _json_object(grouped.get("mean_metrics"))
+    literal = _json_object(development.get("literal_query_regression"))
+    literal_metrics = _json_object(literal.get("metrics"))
+    model_metadata = _json_object(development.get("model_metadata"))
+
+    def non_negative_int(value: object) -> int | None:
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            return value
+        return None
+
+    judgment_count = non_negative_int(development.get("judgment_count"))
+    reviewed_count = non_negative_int(development.get("reviewed_judgment_count"))
+    binary_count = non_negative_int(development.get("binary_judgment_count"))
+    relevant_count = non_negative_int(development.get("relevant_count"))
+    not_relevant_count = non_negative_int(development.get("not_relevant_count"))
+    uncertain_count = non_negative_int(development.get("uncertain_count"))
+    conversation_count = non_negative_int(
+        development.get("conversation_group_count", development.get("conversation_count"))
+    )
+    fold_count = non_negative_int(development.get("fold_count"))
+    revision_count = non_negative_int(current_revision.get("row_count"))
+    counts_valid = bool(
+        judgment_count is not None
+        and reviewed_count == judgment_count
+        and binary_count is not None
+        and relevant_count is not None
+        and not_relevant_count is not None
+        and uncertain_count is not None
+        and binary_count == relevant_count + not_relevant_count
+        and judgment_count == binary_count + uncertain_count
+        and relevant_count >= DIRECT_CONFLICT_DEVELOPMENT_MIN_RELEVANT_COUNT
+        and not_relevant_count >= DIRECT_CONFLICT_DEVELOPMENT_MIN_NOT_RELEVANT_COUNT
+        and revision_count == judgment_count
+        and conversation_count is not None
+        and conversation_count >= DIRECT_CONFLICT_DEVELOPMENT_FOLD_COUNT
+        and fold_count == DIRECT_CONFLICT_DEVELOPMENT_FOLD_COUNT
+        and non_negative_int(grouped.get("fold_count")) == DIRECT_CONFLICT_DEVELOPMENT_FOLD_COUNT
+    )
+    grouped_metrics_valid = bool(
+        set(minimum_metrics) == set(DIRECT_CONFLICT_PUBLIC_METRICS)
+        and set(mean_metrics) == set(DIRECT_CONFLICT_PUBLIC_METRICS)
+        and all(
+            _semantic_metric_value_valid(minimum_metrics.get(name))
+            and _semantic_metric_value_valid(mean_metrics.get(name))
+            and float(cast(int | float, mean_metrics[name]))
+            >= float(cast(int | float, minimum_metrics[name]))
+            for name in DIRECT_CONFLICT_PUBLIC_METRICS
+        )
+        and all(
+            float(cast(int | float, minimum_metrics[name])) >= threshold
+            for name, threshold in DIRECT_CONFLICT_DEVELOPMENT_THRESHOLDS.items()
+        )
+        and grouped.get("passed") is True
+    )
+    literal_counts_valid = bool(
+        non_negative_int(literal.get("reviewed_judgment_count"))
+        == DIRECT_CONFLICT_LITERAL_REGRESSION_REVIEWED_COUNT
+        and non_negative_int(literal.get("relevant_judgment_count"))
+        == DIRECT_CONFLICT_LITERAL_REGRESSION_RELEVANT_COUNT
+        and non_negative_int(literal.get("not_relevant_judgment_count"))
+        == DIRECT_CONFLICT_LITERAL_REGRESSION_NOT_RELEVANT_COUNT
+        and non_negative_int(literal.get("uncertain_judgment_count")) == 0
+        and literal.get("cohort_complete") is True
+        and isinstance(literal.get("candidate_count"), int)
+        and not isinstance(literal.get("candidate_count"), bool)
+        and cast(int, literal["candidate_count"]) > 0
+    )
+    literal_metrics_valid = bool(
+        set(literal_metrics) == {"query_count", "k", "recall_at_10", "mrr_at_10", "ndcg_at_10"}
+        and literal_metrics.get("query_count") == 1
+        and literal_metrics.get("k") == DIRECT_CONFLICT_RANKING_K
+        and all(
+            _semantic_metric_value_valid(literal_metrics.get(name))
+            and float(cast(int | float, literal_metrics[name])) >= threshold
+            for name, threshold in DIRECT_CONFLICT_DEVELOPMENT_THRESHOLDS.items()
+        )
+        and literal.get("passed") is True
+        and literal.get("failure_code") is None
+    )
+    revision_current = bool(
+        development.get("feedback_revision") == current_revision
+        and development.get("feedback_revision_stable_during_evaluation") is True
+    )
+    provenance_valid = bool(
+        development.get("method") == DIRECT_CONFLICT_DEVELOPMENT_METHOD
+        and development.get("ranking_pipeline") == DIRECT_CONFLICT_RANKING_PIPELINE_VERSION
+        and model_metadata.get("classifier") == DIRECT_CONFLICT_CLASSIFIER
+        and model_metadata.get("library") == "scikit-learn"
+        and isinstance(model_metadata.get("library_version"), str)
+        and bool(model_metadata["library_version"])
+        and model_metadata.get("ranker_version") == DIRECT_CONFLICT_RANKER_VERSION
+        and model_metadata.get("score_kind") == DIRECT_CONFLICT_SCORE_KIND
+        and _json_object(model_metadata.get("parameters"))
+        == asdict(DEFAULT_DIRECT_CONFLICT_PARAMETERS)
+        and isinstance(development.get("private_material_fingerprint_sha256"), str)
+        and re.fullmatch(
+            r"[0-9a-f]{64}",
+            cast(str, development["private_material_fingerprint_sha256"]),
+        )
+    )
+    contract_valid = bool(
+        development.get("required_for_production_acceptance") is True
+        and development.get("benchmark_kind") == DIRECT_CONFLICT_DEVELOPMENT_BENCHMARK_KIND
+        and development.get("evaluation_intent") == DIRECT_CONFLICT_DEVELOPMENT_INTENT
+        and development.get("evidence_kind") == DIRECT_CONFLICT_DEVELOPMENT_EVIDENCE_KIND
+        and development.get("held_out") is False
+        and development.get("query_details_persisted") is False
+        and development.get("status") == "passed"
+        and development.get("passed") is True
+        and development.get("minimums")
+        == {
+            "relevant_count": DIRECT_CONFLICT_DEVELOPMENT_MIN_RELEVANT_COUNT,
+            "not_relevant_count": DIRECT_CONFLICT_DEVELOPMENT_MIN_NOT_RELEVANT_COUNT,
+            "fold_count": DIRECT_CONFLICT_DEVELOPMENT_FOLD_COUNT,
+        }
+        and development.get("thresholds")
+        == {
+            **DIRECT_CONFLICT_DEVELOPMENT_THRESHOLDS,
+            "k": DIRECT_CONFLICT_RANKING_K,
+        }
+    )
+    report: dict[str, object] = {
+        "contract_valid": contract_valid,
+        "feedback_revision_current": revision_current,
+        "count_relationships_valid": counts_valid,
+        "grouped_cross_validation_complete": grouped_metrics_valid,
+        "literal_regression_cohort_complete": literal_counts_valid,
+        "literal_regression_metrics_complete": literal_metrics_valid,
+        "model_and_private_material_provenance_valid": provenance_valid,
+        "judgment_count": judgment_count,
+        "binary_judgment_count": binary_count,
+        "uncertain_count": uncertain_count,
+        "literal_reviewed_judgment_count": literal.get("reviewed_judgment_count"),
+        "private_values_emitted": False,
+    }
+    passed = all(
+        value is True
+        for key, value in report.items()
+        if key
+        not in {
+            "judgment_count",
+            "binary_judgment_count",
+            "uncertain_count",
+            "literal_reviewed_judgment_count",
+            "private_values_emitted",
+        }
+    )
+    return passed, report
+
+
+def _semantic_held_out_upgrade_metrics(
+    accepted_value: object,
+    *,
+    allow_previous_evaluator: bool = False,
+    allow_legacy_v6: bool = False,
+) -> tuple[dict[str, float] | None, dict[str, object]]:
+    accepted = _json_object(accepted_value)
+    held_out = _json_object(accepted.get("held_out_feedback"))
+    metrics = _json_object(held_out.get("metrics"))
+    query_count = metrics.get("query_count")
+    mode_counts = _json_object(held_out.get("query_group_counts_by_mode"))
+    metrics_by_mode = _json_object(held_out.get("metrics_by_mode"))
+    aggregate_shape_valid = bool(
+        isinstance(query_count, int)
+        and not isinstance(query_count, bool)
+        and query_count >= HELD_OUT_MIN_QUERY_COUNT
+        and _semantic_retrieval_metrics_valid(metrics, query_count=query_count)
+    )
+    mode_counts_shape_valid = bool(
+        aggregate_shape_valid
+        and set(mode_counts) == {"semantic", "hybrid"}
+        and all(
+            isinstance(mode_counts.get(mode), int)
+            and not isinstance(mode_counts.get(mode), bool)
+            and cast(int, mode_counts[mode]) >= 0
+            for mode in ("semantic", "hybrid")
+        )
+        and sum(cast(int, mode_counts[mode]) for mode in ("semantic", "hybrid")) == query_count
+    )
+    mode_shape_valid = bool(
+        mode_counts_shape_valid
+        and set(metrics_by_mode) == {"semantic", "hybrid"}
+        and all(
+            _semantic_retrieval_metrics_valid(
+                metrics_by_mode.get(mode),
+                query_count=cast(int, mode_counts[mode]),
+            )
+            for mode in ("semantic", "hybrid")
+        )
+    )
+    weighted_reconciliation = bool(
+        mode_shape_valid
+        and _semantic_weighted_metrics_reconcile(
+            metrics,
+            metrics_by_mode,
+            mode_counts,
+            metric_names=SEMANTIC_UPGRADE_METRICS,
+        )
+    )
+    evaluator_version = accepted.get("evaluator_version")
+    legacy_v6 = bool(
+        allow_legacy_v6
+        and evaluator_version == LEGACY_SEMANTIC_IR_EVALUATOR_VERSION
+        and mode_counts_shape_valid
+        and "metrics_by_mode" not in held_out
+    )
+    previous_evaluator = bool(
+        allow_previous_evaluator
+        and evaluator_version == PREVIOUS_SEMANTIC_IR_EVALUATOR_VERSION
+        and mode_shape_valid
+        and weighted_reconciliation
+    )
+    evaluator_evidence_valid = bool(
+        (
+            evaluator_version == SEMANTIC_IR_EVALUATOR_VERSION
+            and mode_shape_valid
+            and weighted_reconciliation
+        )
+        or previous_evaluator
+        or (legacy_v6 and aggregate_shape_valid)
+    )
+    held_out_accepted = bool(
+        evaluator_evidence_valid
+        and accepted.get("passed") is True
+        and (legacy_v6 or accepted.get("production_acceptance_passed") is True)
+        and accepted.get("decision") == "accepted"
+        and held_out.get("benchmark_kind") == "held_out_user_feedback"
+        and held_out.get("status") == "passed"
+        and held_out.get("passed") is True
+        and held_out.get("used_for_activation") is True
+        and held_out.get("feedback_revision_stable_during_evaluation") is True
+        and held_out.get("ranking_pipeline") == SEMANTIC_RANKING_PIPELINE_VERSION
+        and held_out.get("reranker") == asdict(DEFAULT_RERANKER_SPEC)
+    )
+    report: dict[str, object] = {
+        "held_out_accepted": held_out_accepted,
+        "aggregate_metric_shape_valid": aggregate_shape_valid,
+        "per_mode_metric_shape_valid": mode_shape_valid,
+        "aggregate_reconciles_to_modes": (weighted_reconciliation if not legacy_v6 else None),
+        "previous_evaluator_evidence": previous_evaluator,
+        "legacy_v6_aggregate_only_evidence": legacy_v6,
+        "query_count": query_count if isinstance(query_count, int) else None,
+        "private_values_emitted": False,
+    }
+    if not (held_out_accepted and evaluator_evidence_valid):
+        return None, report
+    return (
+        {name: float(cast(int | float, metrics[name])) for name in SEMANTIC_UPGRADE_METRICS},
+        report,
+    )
+
+
+def _semantic_upgrade_comparison_binding(
+    candidate_accepted_value: object,
+    incumbent_accepted_value: object,
+) -> tuple[bool, dict[str, object]]:
+    candidate_accepted = _json_object(candidate_accepted_value)
+    incumbent_accepted = _json_object(incumbent_accepted_value)
+    candidate_candidate = _json_object(candidate_accepted.get("candidate"))
+    incumbent_candidate = _json_object(incumbent_accepted.get("candidate"))
+    candidate_held = _json_object(candidate_accepted.get("held_out_feedback"))
+    incumbent_held = _json_object(incumbent_accepted.get("held_out_feedback"))
+    candidate_metrics, candidate_metrics_report = _semantic_held_out_upgrade_metrics(
+        candidate_accepted
+    )
+    incumbent_metrics, incumbent_metrics_report = _semantic_held_out_upgrade_metrics(
+        incumbent_accepted,
+        allow_previous_evaluator=True,
+        allow_legacy_v6=True,
+    )
+    comparable = bool(
+        candidate_metrics is not None
+        and incumbent_metrics is not None
+        and candidate_candidate.get("corpus_revision") == incumbent_candidate.get("corpus_revision")
+        and candidate_held.get("feedback_revision") == incumbent_held.get("feedback_revision")
+        and _json_object(candidate_held.get("metrics")).get("query_count")
+        == _json_object(incumbent_held.get("metrics")).get("query_count")
+        and candidate_held.get("ranking_pipeline") == incumbent_held.get("ranking_pipeline")
+        and candidate_held.get("reranker") == incumbent_held.get("reranker")
+    )
+    comparison = _json_object(candidate_accepted.get("active_incumbent_comparison"))
+    comparison_shape_valid = bool(
+        comparison.get("required_for_activation") is True
+        and _semantic_incumbent_comparison_valid(comparison)
+    )
+    values_bound = False
+    if comparable and comparison_shape_valid:
+        comparison_metrics = _json_object(comparison.get("metrics"))
+        values_bound = all(
+            math.isclose(
+                float(cast(int | float, _json_object(comparison_metrics.get(name))["candidate"])),
+                cast(dict[str, float], candidate_metrics)[name],
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+            and math.isclose(
+                float(cast(int | float, _json_object(comparison_metrics.get(name))["incumbent"])),
+                cast(dict[str, float], incumbent_metrics)[name],
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+            for name in SEMANTIC_UPGRADE_METRICS
+        )
+    report: dict[str, object] = {
+        "candidate_metrics": candidate_metrics_report,
+        "incumbent_metrics": incumbent_metrics_report,
+        "independently_comparable": comparable,
+        "stored_comparison_required_and_valid": comparison_shape_valid,
+        "stored_values_bound_to_candidate_and_incumbent": values_bound,
+        "private_values_emitted": False,
+    }
+    return bool(comparable and comparison_shape_valid and values_bound), report
+
+
+def _semantic_upgrade_incumbent_evidence(
+    connection: Any,
+    candidate_accepted: Mapping[str, object],
+) -> tuple[bool, dict[str, object]]:
+    incumbent_spec = SEMANTIC_MODEL_SPECS.get("multilingual-e5-small")
+    report: dict[str, object] = {
+        "required_incumbent_alias": "multilingual-e5-small",
+        "required_incumbent_registered": incumbent_spec is not None,
+        "deactivated_ready_incumbent_count": 0,
+        "provenance_current_incumbent_count": 0,
+        "independently_comparable_incumbent_count": 0,
+        "comparison_binding": {},
+        "private_values_emitted": False,
+    }
+    if incumbent_spec is None:
+        return False, report
+    rows = _rows(
+        connection,
+        """
+        SELECT id, backend, backend_version, distance_metric, vector_table,
+               window_version, window_count, audit_json
+        FROM semantic_index_configs
+        WHERE active = 0
+          AND status = 'ready'
+          AND model_name = :model_name
+          AND model_revision = :model_revision
+          AND dimensions = :dimensions
+          AND document_prefix = :document_prefix
+          AND query_prefix = :query_prefix
+        ORDER BY completed_at DESC, id
+        """,
+        {
+            "model_name": incumbent_spec.model_name,
+            "model_revision": incumbent_spec.model_revision,
+            "dimensions": incumbent_spec.dimensions,
+            "document_prefix": incumbent_spec.document_prefix,
+            "query_prefix": incumbent_spec.query_prefix,
+        },
+    )
+    bindings: list[tuple[bool, dict[str, object]]] = []
+    provenance_current_count = 0
+    for row in rows:
+        audit = _database_json_object(row.audit_json) or {}
+        incumbent_accepted = _json_object(audit.get("accepted_semantic_ir_evaluation"))
+        incumbent_candidate = _json_object(incumbent_accepted.get("candidate"))
+        artifact_fingerprint = audit.get("artifact_fingerprint")
+        corpus_revision = audit.get("corpus_revision")
+        artifact_valid = bool(
+            isinstance(artifact_fingerprint, str)
+            and re.fullmatch(r"sha256:[0-9a-f]{64}", artifact_fingerprint)
+        )
+        corpus_valid = bool(
+            isinstance(corpus_revision, str) and re.fullmatch(r"[0-9a-f]{64}", corpus_revision)
+        )
+        expected_config_id = (
+            _legacy_e5_config_hash(
+                incumbent_spec,
+                backend=str(row.backend),
+                backend_version=str(row.backend_version),
+                corpus_revision=cast(str, corpus_revision),
+                artifact_fingerprint=cast(str, artifact_fingerprint),
+            )
+            if artifact_valid and corpus_valid
+            else None
+        )
+        incumbent_provenance_current = bool(
+            expected_config_id is not None
+            and row.id == expected_config_id
+            and row.backend == "lancedb-transformers"
+            and isinstance(row.backend_version, str)
+            and bool(row.backend_version)
+            and row.distance_metric == "cosine"
+            and row.window_version == SEARCH_WINDOW_VERSION
+            and row.vector_table == f"text_windows_{expected_config_id[:16]}"
+            and audit.get("selected_model") == _legacy_e5_model_identity(incumbent_spec)
+            and audit.get("embedding_implementation")
+            == _legacy_e5_embedding_implementation(incumbent_spec)
+            and incumbent_candidate.get("config_hash") == row.id
+            and incumbent_candidate.get("vector_table") == row.vector_table
+            and incumbent_candidate.get("window_count") == int(row.window_count)
+            and incumbent_candidate.get("corpus_revision") == corpus_revision
+            and incumbent_candidate.get("distance_metric") == "cosine"
+        )
+        if not incumbent_provenance_current:
+            continue
+        provenance_current_count += 1
+        bindings.append(
+            _semantic_upgrade_comparison_binding(candidate_accepted, incumbent_accepted)
+        )
+    passing_bindings = [binding for binding in bindings if binding[0]]
+    representative_binding = (
+        passing_bindings[0][1]
+        if len(passing_bindings) == 1
+        else bindings[0][1]
+        if len(bindings) == 1
+        else {
+            "independently_comparable": False,
+            "stored_comparison_required_and_valid": False,
+            "stored_values_bound_to_candidate_and_incumbent": False,
+            "private_values_emitted": False,
+        }
+    )
+    report.update(
+        {
+            "deactivated_ready_incumbent_count": len(rows),
+            "provenance_current_incumbent_count": provenance_current_count,
+            "independently_comparable_incumbent_count": len(passing_bindings),
+            "comparison_binding": representative_binding,
+        }
+    )
+    return len(passing_bindings) == 1, report
 
 
 def _active_membership_count(
@@ -3896,7 +5008,9 @@ def _search_user_story_acceptance(
     active_config = connection.execute(
         text(
             """
-            SELECT id, model_name, model_revision, window_version, audit_json
+            SELECT id, backend, backend_version, model_name, model_revision,
+                   dimensions, distance_metric, document_prefix, query_prefix,
+                   vector_table, window_version, window_count, audit_json
             FROM semantic_index_configs
             WHERE active = 1 AND status = 'ready'
             ORDER BY id
@@ -5508,6 +6622,29 @@ def _semantic_integrity(
     audit = audit if isinstance(audit, dict) else {}
     accepted = audit.get("accepted_semantic_ir_evaluation")
     accepted = accepted if isinstance(accepted, dict) else {}
+    independently_recomputed_artifact_fingerprint: str | None = None
+    production_spec_for_artifact = SEMANTIC_MODEL_SPECS.get(AUTO_EMBEDDING_MODEL_ALIAS)
+    if production_spec_for_artifact is not None:
+        try:
+            independently_recomputed_artifact_fingerprint = (
+                _independent_embedding_artifact_fingerprint(
+                    layout,
+                    production_spec_for_artifact,
+                )
+            )
+        except Exception:
+            independently_recomputed_artifact_fingerprint = None
+    production_config_current, production_config_report = _production_semantic_config_provenance(
+        row,
+        independently_recomputed_artifact_fingerprint=(
+            independently_recomputed_artifact_fingerprint
+        ),
+        require_independent_artifact_fingerprint=True,
+    )
+    semantic_v7_valid, semantic_v7_report = _semantic_v7_evidence(accepted)
+    upgrade_incumbent_valid, upgrade_incumbent_report = _semantic_upgrade_incumbent_evidence(
+        connection, accepted
+    )
     automatic = accepted.get("automatic_known_item")
     automatic = automatic if isinstance(automatic, dict) else {}
     automatic_sampling = automatic.get("sampling")
@@ -5556,6 +6693,10 @@ def _semantic_integrity(
         isinstance(recorded_development_revision, dict)
         and recorded_development_revision == current_development_revision
         and development.get("feedback_revision_stable_during_evaluation") is True
+    )
+    complete_development_valid, complete_development_report = _complete_direct_conflict_evidence(
+        development,
+        current_revision=current_development_revision,
     )
 
     def _non_negative_int(value: object) -> int | None:
@@ -5668,27 +6809,30 @@ def _semantic_integrity(
     accepted_passed = (
         accepted.get("passed") is True
         and accepted.get("evaluator_version") == SEMANTIC_IR_EVALUATOR_VERSION
+        and semantic_v7_valid
+        and upgrade_incumbent_valid
         and automatic.get("passed") is True
         and automatic.get("used_for_activation") is True
         and isinstance(automatic_sampling.get("sampled_query_count"), int)
+        and not isinstance(automatic_sampling.get("sampled_query_count"), bool)
         and automatic_sampling["sampled_query_count"] > 0
         and held_out_passed
         and development_passed
+        and complete_development_valid
         and accepted_candidate.get("config_hash") == config_id
         and accepted_candidate.get("vector_table") == row.vector_table
         and accepted_candidate.get("window_count") == int(row.window_count)
         and accepted_candidate.get("distance_metric") == "cosine"
     )
-    pinned_specs = [
-        spec
-        for spec in SEMANTIC_MODEL_SPECS.values()
-        if spec.model_name == row.model_name
-        and spec.model_revision == row.model_revision
-        and spec.dimensions == row.dimensions
-        and spec.document_prefix == row.document_prefix
-        and spec.query_prefix == row.query_prefix
-    ]
-    model_is_pinned = len(pinned_specs) == 1
+    production_spec = SEMANTIC_MODEL_SPECS.get(AUTO_EMBEDDING_MODEL_ALIAS)
+    model_is_pinned = bool(
+        production_spec is not None
+        and production_spec.model_name == row.model_name
+        and production_spec.model_revision == row.model_revision
+        and production_spec.dimensions == row.dimensions
+        and production_spec.document_prefix == row.document_prefix
+        and production_spec.query_prefix == row.query_prefix
+    )
     lance_count: int | None = None
     lance_scanned_count: int | None = None
     lance_duplicate_rows: int | None = None
@@ -5746,6 +6890,7 @@ def _semantic_integrity(
         and membership_count == int(row.window_count) == window_total
         and lance_ready
         and model_is_pinned
+        and production_config_current
         and source_coverage_check.status == "pass"
     )
     payload = {
@@ -5814,6 +6959,9 @@ def _semantic_integrity(
         "entity_type_counts": type_counts,
         "source_coverage": source_coverage_report,
         "accepted_ir_evaluation": accepted_passed,
+        "semantic_v7_evidence": semantic_v7_report,
+        "semantic_upgrade_incumbent": upgrade_incumbent_report,
+        "production_model_provenance": production_config_report,
         "automatic_ir_sample_count": automatic_sampling.get("sampled_query_count"),
         "held_out_feedback_used": held_out.get("used_for_activation") is True,
         "held_out_feedback_passed": held_out_passed,
@@ -5829,7 +6977,7 @@ def _semantic_integrity(
                 development.get("required_for_production_acceptance")
             ),
             "status": development.get("status"),
-            "passed": development_passed,
+            "passed": development_passed and complete_development_valid,
             "query_details_persisted": development.get("query_details_persisted"),
             "feedback_revision": {
                 "row_count": revision_row_count,
@@ -5858,6 +7006,7 @@ def _semantic_integrity(
                 "classifier": model_metadata.get("classifier"),
                 "library_version": model_metadata.get("library_version"),
             },
+            "complete_evidence": complete_development_report,
         },
         "pinned_model_identity": model_is_pinned,
     }
@@ -5866,9 +7015,10 @@ def _semantic_integrity(
             "semantic.active_ready_config",
             ready and accepted_passed and bool(type_counts),
             expected=(
-                "one pinned, ready configuration with exact SQLite/Lance counts and accepted "
-                "automatic and held-out IR evidence plus current conversation-grouped "
-                "direct-conflict development calibration"
+                "one pinned automatic embedding configuration with independently hashed artifact "
+                "provenance, exact SQLite/Lance counts, weighted evaluator-v7 evidence, a "
+                "comparison bound to the deactivated E5 incumbent, and complete direct-conflict "
+                "development calibration"
             ),
             actual=payload,
             detail="Vector-table names, window IDs, paths, queries, and retrieved text are omitted",
@@ -10839,12 +11989,17 @@ def _spot_semantic_certification_metadata(
         "development_counts_valid": False,
         "development_metrics_valid": False,
         "development_thresholds_current": False,
+        "complete_direct_conflict_evidence_valid": False,
+        "complete_direct_conflict_evidence": {},
+        "semantic_v7_evidence_valid": False,
+        "semantic_v7_evidence": {},
         "query_details_emitted": False,
     }
     try:
         audit = _database_json_object(config.audit_json) or {}
         accepted = _json_object(audit.get("accepted_semantic_ir_evaluation"))
         report["metadata_observed"] = bool(accepted)
+        semantic_v7_valid, semantic_v7_report = _semantic_v7_evidence(accepted)
         automatic = _json_object(accepted.get("automatic_known_item"))
         automatic_sampling = _json_object(automatic.get("sampling"))
         automatic_metrics = _json_object(automatic.get("metrics"))
@@ -10897,6 +12052,12 @@ def _spot_semantic_certification_metadata(
 
         development = _json_object(accepted.get("direct_conflict_development_calibration"))
         current_development_revision = development_feedback_revision(engine)
+        complete_development_valid, complete_development_report = (
+            _complete_direct_conflict_evidence(
+                development,
+                current_revision=current_development_revision,
+            )
+        )
         development_revision_current = bool(
             isinstance(development.get("feedback_revision"), dict)
             and development.get("feedback_revision") == current_development_revision
@@ -10992,6 +12153,7 @@ def _spot_semantic_certification_metadata(
             and candidate.get("vector_table") == config.vector_table
             and candidate.get("window_count") == int(config.window_count)
             and candidate.get("distance_metric") == "cosine"
+            and candidate.get("corpus_revision") == audit.get("corpus_revision")
         )
         sampled_query_count = automatic_sampling.get("sampled_query_count")
         automatic_valid = bool(
@@ -11015,7 +12177,9 @@ def _spot_semantic_certification_metadata(
             and automatic_valid
             and held_valid
             and development_valid
+            and complete_development_valid
             and candidate_valid
+            and semantic_v7_valid
         )
         report.update(
             {
@@ -11033,6 +12197,10 @@ def _spot_semantic_certification_metadata(
                 "development_counts_valid": development_counts_valid,
                 "development_metrics_valid": development_metrics_valid,
                 "development_thresholds_current": development_thresholds_current,
+                "complete_direct_conflict_evidence_valid": complete_development_valid,
+                "complete_direct_conflict_evidence": complete_development_report,
+                "semantic_v7_evidence_valid": semantic_v7_valid,
+                "semantic_v7_evidence": semantic_v7_report,
             }
         )
         return passed, report
@@ -11070,8 +12238,9 @@ def _spot_semantic_lance_sample(
         )
     configs = _rows(
         connection,
-        "SELECT id, status, model_name, model_revision, dimensions, distance_metric, "
-        "vector_table, window_version, window_count, audit_json FROM semantic_index_configs "
+        "SELECT id, status, backend, backend_version, model_name, model_revision, dimensions, "
+        "distance_metric, document_prefix, query_prefix, vector_table, window_version, "
+        "window_count, audit_json FROM semantic_index_configs "
         "WHERE active = 1 ORDER BY id",
     )
     if len(configs) != 1:
@@ -11091,6 +12260,14 @@ def _spot_semantic_lance_sample(
     config = configs[0]
     config_id = str(config.id)
     metadata_valid, metadata_report = _spot_semantic_certification_metadata(engine, config)
+    production_config_current, production_config_report = _production_semantic_config_provenance(
+        config
+    )
+    config_audit = _database_json_object(config.audit_json) or {}
+    accepted_evaluation = _json_object(config_audit.get("accepted_semantic_ir_evaluation"))
+    upgrade_incumbent_valid, upgrade_incumbent_report = _semantic_upgrade_incumbent_evidence(
+        connection, accepted_evaluation
+    )
     membership_count = int(
         _scalar(
             connection,
@@ -11154,11 +12331,14 @@ def _spot_semantic_lance_sample(
             )
     except Exception:
         lance_sample_valid = False
-    pinned = any(
-        spec.model_name == config.model_name
-        and spec.model_revision == config.model_revision
-        and spec.dimensions == config.dimensions
-        for spec in SEMANTIC_MODEL_SPECS.values()
+    production_spec = SEMANTIC_MODEL_SPECS.get(AUTO_EMBEDDING_MODEL_ALIAS)
+    pinned = bool(
+        production_spec is not None
+        and production_spec.model_name == config.model_name
+        and production_spec.model_revision == config.model_revision
+        and production_spec.dimensions == config.dimensions
+        and production_spec.document_prefix == config.document_prefix
+        and production_spec.query_prefix == config.query_prefix
     )
     exact_counts_valid = bool(
         config.status == "ready"
@@ -11169,6 +12349,8 @@ def _spot_semantic_lance_sample(
     passed = bool(
         exact_counts_valid
         and pinned
+        and production_config_current
+        and upgrade_incumbent_valid
         and metadata_valid
         and sqlite_sample_valid
         and lance_sample_valid
@@ -11185,6 +12367,10 @@ def _spot_semantic_lance_sample(
             "sqlite_sample_valid": sqlite_sample_valid,
             "lance_sample_valid": lance_sample_valid,
             "pinned_model_identity": pinned,
+            "production_model_provenance_current": production_config_current,
+            "production_model_provenance": production_config_report,
+            "semantic_upgrade_incumbent_current": upgrade_incumbent_valid,
+            "semantic_upgrade_incumbent": upgrade_incumbent_report,
             "certification_metadata_current": metadata_valid,
             "certification_metadata": metadata_report,
         }
@@ -11195,7 +12381,8 @@ def _spot_semantic_lance_sample(
                 "semantic.production_spot_check_sample",
                 passed,
                 expected=(
-                    "current evaluator, candidate, threshold and feedback-revision metadata; "
+                    "bounded automatic-model metadata provenance with reduced artifact assurance; "
+                    "weighted evaluator-v7 certification bound to the deactivated E5 incumbent; "
                     "exact active counts; and deterministic SQLite/Lance samples"
                 ),
                 actual=report,

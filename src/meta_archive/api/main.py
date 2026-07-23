@@ -31,6 +31,7 @@ from meta_archive.api.security import (
     require_session,
 )
 from meta_archive.api.stage4_routes import stage4_router
+from meta_archive.api.star_routes import star_router
 from meta_archive.database import (
     CatalogMigrationError,
     create_catalog_engine,
@@ -207,6 +208,7 @@ def create_app(
     app.include_router(search_router)
     app.include_router(enrichment_router)
     app.include_router(stage4_router)
+    app.include_router(star_router)
 
     if acceptance_nonce is not None:
         identity_lock = threading.Lock()

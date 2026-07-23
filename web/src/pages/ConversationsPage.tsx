@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { type CSSProperties, type FormEvent, useMemo, useRef, useState } from 'react'
 import { BoundedResultsHint } from '../components/BoundedResultsHint'
+import { StarButton } from '../components/StarButton'
 import { EmptyState, ErrorState, MetricCard, PageHeading, PageLoading, StatusBadge } from '../components/ui'
 import { api, type ConversationQuery } from '../lib/api'
 import type { ConversationSummary, SortDirection } from '../lib/contracts'
@@ -263,13 +264,20 @@ function ConversationTable({
                 style={{ transform: `translateY(${virtualRow.start}px)` }}
               >
                 <div className="conversation-table__identity" role="cell">
-                  <Link
-                    to="/conversations/$conversationId"
-                    params={{ conversationId: conversation.id }}
-                    search={{ around: undefined }}
-                  >
-                    {conversation.title || 'Untitled conversation'}
-                  </Link>
+                  <div className="conversation-table__identity-heading">
+                    <Link
+                      to="/conversations/$conversationId"
+                      params={{ conversationId: conversation.id }}
+                      search={{ around: undefined }}
+                    >
+                      {conversation.title || 'Untitled conversation'}
+                    </Link>
+                    <StarButton
+                      target={conversation.star_target ?? { target_type: 'conversation', target_id: conversation.id }}
+                      star={conversation.star}
+                      label={`conversation ${conversation.title || 'Untitled conversation'}`}
+                    />
+                  </div>
                   <span title={conversation.source_categories.join(', ')}>
                     {conversation.source_categories.map(sentenceCase).join(' · ') || 'Unknown source'}
                   </span>

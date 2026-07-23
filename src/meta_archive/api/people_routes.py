@@ -45,6 +45,7 @@ from meta_archive.models import (
     SourceFile,
 )
 from meta_archive.services.identifiers import stable_id
+from meta_archive.services.stars import attach_star_states
 from meta_archive.services.text import normalize_text
 
 people_router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_session)])
@@ -827,6 +828,12 @@ def _relationship_page(
                 }
             )
         items.append(item)
+    with session_for(request) as session:
+        attach_star_states(
+            session,
+            items,
+            lambda item: ("activity", str(item["id"])),
+        )
 
     return {
         "coverage": coverage,
@@ -858,6 +865,7 @@ def _contacts_page(
     direction: Direction,
     limit: int,
     cursor: str | None,
+    around: str | None,
 ) -> dict[str, Any]:
     if conversation_type not in {None, "direct", "group"}:
         raise HTTPException(status_code=422, detail="Unknown contact conversation type")
@@ -889,6 +897,8 @@ def _contacts_page(
             "absence_is_not_zero_history": not all_items,
         }
         start = 0
+        if cursor and around is not None:
+            raise HTTPException(status_code=422, detail="Choose a cursor or contact target")
         if cursor:
             try:
                 decoded = decode_cursor(cursor, kind="contacts")
@@ -898,17 +908,42 @@ def _contacts_page(
                 start = next(index + 1 for index, item in enumerate(items) if item.id == cursor_id)
             except (InvalidCursor, StopIteration) as exc:
                 raise invalid_cursor(str(exc) or "Contact cursor no longer exists") from exc
+        elif around is not None:
+            try:
+                start = next(index for index, item in enumerate(items) if item.id == around)
+            except StopIteration as exc:
+                known_contact = any(item.id == around for item in all_items)
+                if not known_contact:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Messenger contact not found",
+                    ) from exc
+                raise HTTPException(
+                    status_code=422,
+                    detail="Messenger contact does not match the active filters",
+                ) from exc
         page_items = items[start : start + limit]
         next_cursor = None
         if start + limit < len(items) and page_items:
             next_cursor = encode_cursor("contacts", scope=scope, id=page_items[-1].id)
         total = len(items) if all_items else None
         count_is_unknown = not all_items
+        payload_items = [_contact_payload(item) for item in page_items]
+        attach_star_states(
+            session,
+            payload_items,
+            lambda item: ("messenger_contact", str(item["id"])),
+        )
         aggregate_memo.require_current()
     return {
         "coverage": coverage,
         "authority": "messenger_contact_only",
-        "items": [_contact_payload(item) for item in page_items],
+        "around": (
+            {"requested": around, "contact_id": around, "resolved": True}
+            if around is not None
+            else None
+        ),
+        "items": payload_items,
         "page": {
             "total": total,
             "limit": limit,
@@ -933,13 +968,6 @@ def people(
     if view == "contacts":
         if sort not in _CONTACT_SORTS:
             raise HTTPException(status_code=422, detail="Unknown contact sort")
-        if around is not None:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "Contact views use conversation links rather than relationship around targets"
-                ),
-            )
         return _contacts_page(
             request,
             q=q,
@@ -948,6 +976,7 @@ def people(
             direction=direction,
             limit=limit,
             cursor=cursor,
+            around=around,
         )
     if sort not in _RELATIONSHIP_SORTS:
         raise HTTPException(status_code=422, detail="Unknown relationship sort")
@@ -999,10 +1028,17 @@ def contact_detail(request: Request, contact_id: str) -> dict[str, Any]:
             ),
             None,
         )
+        contact = _contact_payload(contact_projection) if contact_projection is not None else None
+        if contact is not None:
+            attach_star_states(
+                session,
+                [contact],
+                lambda item: ("messenger_contact", str(item["id"])),
+            )
         aggregate_memo.require_current()
     if contact_projection is None:
         raise HTTPException(status_code=404, detail="Messenger contact not found")
-    contact = _contact_payload(contact_projection)
+    assert contact is not None
     return {
         "authority": "messenger_contact_only",
         "friendship_history": {

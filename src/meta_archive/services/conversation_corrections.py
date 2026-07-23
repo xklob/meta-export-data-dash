@@ -45,6 +45,7 @@ from meta_archive.services.source_import_lock import (
     assert_source_import_publication_allowed,
     source_import_publication_lock,
 )
+from meta_archive.services.stars import delete_stars_for_targets
 from meta_archive.services.text import normalize_text
 
 
@@ -869,6 +870,11 @@ def revert_conversation_correction(
             for row in segment_rows
             for value in (row.before_conversation_id, row.after_conversation_id)
         }
+        if correction.action == "split":
+            effect["stars_removed"] = delete_stars_for_targets(
+                session,
+                {("conversation", row.after_conversation_id) for row in segment_rows},
+            )
         _reconcile_conversations(session, affected_ids)
         effect.update(_invalidate_conversation_derived_state(session, correction_id))
         effect["library_rebuilt"] = library_present

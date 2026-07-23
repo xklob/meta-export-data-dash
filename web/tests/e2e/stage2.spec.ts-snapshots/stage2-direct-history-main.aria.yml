@@ -6,6 +6,7 @@
 - heading "Alex Example" [level=1]
 - paragraph: Archived Threads · E2ee Cutover
 - text: Provisional
+- button "Star conversation Alex Example"
 - term: Messages
 - definition: /\d+/
 - term: Sent / received
@@ -65,28 +66,26 @@
       - strong: Archive Owner
       - text: You
       - time: /Apr \d+, \d+, 3:\d+ AM/
+      - button "Star message from Archive Owner"
       - text: Generic
       - paragraph: /Fixture message \d+/
     - article /Message from Alex Example on Apr \d+, \d+, 3:\d+ AM/:
       - strong: Alex Example
       - time: /Apr \d+, \d+, 3:\d+ AM/
+      - button "Star message from Alex Example"
       - text: Generic
       - paragraph: /Fixture message \d+/
     - article /Message from Archive Owner on Apr \d+, \d+, 3:\d+ AM/:
       - strong: Archive Owner
       - text: You
       - time: /Apr \d+, \d+, 3:\d+ AM/
+      - button "Star message from Archive Owner"
       - text: Generic
       - paragraph: /Fixture message \d+/
     - article /Message from Alex Example on Apr \d+, \d+, 3:\d+ AM/:
       - strong: Alex Example
       - time: /Apr \d+, \d+, 3:\d+ AM/
-      - text: Generic
-      - paragraph: /Fixture message \d+/
-    - article /Message from Archive Owner on Apr \d+, \d+, 3:\d+ AM/:
-      - strong: Archive Owner
-      - text: You
-      - time: /Apr \d+, \d+, 3:\d+ AM/
+      - button "Star message from Alex Example"
       - text: Generic
       - paragraph: /Fixture message \d+/
   - button "Load newer now"

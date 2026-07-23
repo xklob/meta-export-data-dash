@@ -19,6 +19,7 @@ import {
 } from 'lucide-react'
 import { type FormEvent, useMemo, useState } from 'react'
 import { CursorWindowControls } from '../components/CursorWindowControls'
+import { StarButton } from '../components/StarButton'
 import { EmptyState, ErrorState, PageHeading, PageLoading, ProgressBar, StatusBadge } from '../components/ui'
 import { api, type SearchQuery } from '../lib/api'
 import type {
@@ -28,8 +29,11 @@ import type {
   SearchFeedbackResponse,
   SearchFilters,
   SearchMode,
+  SearchOccurrence,
   SearchResult,
   SemanticIndexAcceptanceEvaluation,
+  SemanticManualActivationOverride,
+  StarTarget,
 } from '../lib/contracts'
 import { formatCount, formatTimestampMs, localDateToTimestamp, sentenceCase, stringifyValue } from '../lib/format'
 import { useArchiveTimezone } from '../lib/useArchiveTimezone'
@@ -128,15 +132,49 @@ function scoreLabel(item: SearchResult): string {
   return `${sentenceCase(item.score_kind)} ${item.score.toFixed(item.score_kind === 'rrf' ? 4 : 3)}`
 }
 
+function starTargetForResult(item: SearchResult): StarTarget | undefined {
+  if (item.star_target) return item.star_target
+  if (item.entity_type !== 'message' && item.entity_type !== 'activity') return undefined
+  const targetId = item.source_id ?? item.provenance.source_id ?? item.id
+  return targetId ? { target_type: item.entity_type, target_id: targetId } : undefined
+}
+
+function starTargetForOccurrence(occurrence: SearchOccurrence): StarTarget | undefined {
+  if (occurrence.star_target) return occurrence.star_target
+  return occurrence.occurrence_id
+    ? { target_type: 'attachment', target_id: occurrence.occurrence_id }
+    : undefined
+}
+
 function retrievalGateSummary(evaluation: SemanticIndexAcceptanceEvaluation): string {
   const metrics = evaluation.automatic_known_item.metrics
   const heldOut = evaluation.held_out_feedback
+  const incumbentMetrics = evaluation.active_incumbent_comparison?.metrics
   const heldOutSummary = heldOut.used_for_activation
     ? ` · held-out ${heldOut.metrics.query_count} queries ${heldOut.status}`
     : heldOut.metrics.query_count
       ? ` · held-out ${heldOut.metrics.query_count} queries (sample too small to gate)`
       : ' · no held-out feedback yet'
-  return `Retrieval gate ${evaluation.passed ? 'passed' : 'failed'} · known-item Recall@${metrics.k} ${metrics.recall_at_k.toFixed(3)} · MRR ${metrics.mrr.toFixed(3)} · nDCG@${metrics.k} ${metrics.ndcg_at_k.toFixed(3)}${heldOutSummary}`
+  const compatibilitySummary = incumbentMetrics?.recall_at_k && incumbentMetrics.mrr && incumbentMetrics.ndcg_at_k
+    ? ` · compatibility candidate vs prior: Recall@${heldOut.metrics.k} ${incumbentMetrics.recall_at_k.candidate.toFixed(3)} vs ${incumbentMetrics.recall_at_k.incumbent.toFixed(3)} · MRR ${incumbentMetrics.mrr.candidate.toFixed(3)} vs ${incumbentMetrics.mrr.incumbent.toFixed(3)} · nDCG@${heldOut.metrics.k} ${incumbentMetrics.ndcg_at_k.candidate.toFixed(3)} vs ${incumbentMetrics.ndcg_at_k.incumbent.toFixed(3)}`
+    : ''
+  return `Retrieval gate ${evaluation.passed ? 'passed' : 'failed'} · known-item Recall@${metrics.k} ${metrics.recall_at_k.toFixed(3)} · MRR ${metrics.mrr.toFixed(3)} · nDCG@${metrics.k} ${metrics.ndcg_at_k.toFixed(3)}${heldOutSummary}${compatibilitySummary}`
+}
+
+function activeManualOverride(audit: Record<string, unknown> | undefined): SemanticManualActivationOverride | null {
+  const value = audit?.manual_activation_override
+  if (!value || typeof value !== 'object') return null
+  const candidate = value as Partial<SemanticManualActivationOverride>
+  if (candidate.acknowledged_failed_quality_gate !== true || typeof candidate.reason !== 'string' || !candidate.reason.trim()) {
+    return null
+  }
+  return candidate as SemanticManualActivationOverride
+}
+
+function overrideModelLabel(modelName: string): string {
+  if (/(^|\/)e5-base-v2$/i.test(modelName)) return 'English E5-base-v2'
+  if (/(^|\/)bge-base-en-v1\.5$/i.test(modelName)) return 'English BGE-base-en-v1.5'
+  return modelName
 }
 
 function RagAuditDetails({ item }: { item: RagAuditItem }) {
@@ -239,6 +277,7 @@ function ResultCard({
           : 'Message result')
   const recordFeedback = (label: 'relevant' | 'not_relevant' | 'uncertain') =>
     onFeedback(label, evaluationSplit || undefined, notes.trim() || undefined)
+  const starTarget = starTargetForResult(item)
   return (
     <article className="search-result" id={`search-result-${item.id}`}>
       <header>
@@ -282,8 +321,9 @@ function ResultCard({
         <details className="search-result__occurrences">
           <summary>{formatCount(occurrenceTotal)} source {occurrenceTotal === 1 ? 'location' : 'locations'}</summary>
           <ol>
-            {occurrences.slice(0, visibleOccurrenceCount).map((occurrence) => (
-              <li key={occurrence.occurrence_id}>
+            {occurrences.slice(0, visibleOccurrenceCount).map((occurrence) => {
+              const occurrenceTarget = starTargetForOccurrence(occurrence)
+              return <li key={occurrence.occurrence_id}>
                 <span>
                   <strong>{occurrence.conversation_title || 'Media library'}</strong>
                   <small>
@@ -292,9 +332,12 @@ function ResultCard({
                     {occurrence.start_ms != null ? ` · audio at ${(occurrence.start_ms / 1000).toFixed(1)}s` : ''}
                   </small>
                 </span>
-                <a className="button button--secondary button--compact" href={occurrence.href}>Jump to this occurrence</a>
+                <span className="search-result__occurrence-actions">
+                  {occurrenceTarget ? <StarButton target={occurrenceTarget} star={occurrence.star} label="source occurrence" /> : null}
+                  <a className="button button--secondary button--compact" href={occurrence.href}>Jump to this occurrence</a>
+                </span>
               </li>
-            ))}
+            })}
           </ol>
           {Math.min(visibleOccurrenceCount, occurrences.length) < occurrenceTotal ? (
             <button className="button button--secondary button--compact" type="button" disabled={loadOccurrences.isPending} onClick={() => {
@@ -351,13 +394,16 @@ function ResultCard({
             <label><span>Notes</span><input value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={2_000} /></label>
           </details>
         </div>
-        {item.jump?.href ? (
-          <a className="button button--secondary button--compact" href={item.jump.href}>
-            Jump to source <ArrowRight size={14} aria-hidden="true" />
-          </a>
-        ) : (
-          <span className="search-result__no-jump">No source anchor available</span>
-        )}
+        <div className="search-result__source-actions">
+          {starTarget ? <StarButton target={starTarget} star={item.star} label={`${sentenceCase(item.entity_type)} search result`} /> : null}
+          {item.jump?.href ? (
+            <a className="button button--secondary button--compact" href={item.jump.href}>
+              Jump to source <ArrowRight size={14} aria-hidden="true" />
+            </a>
+          ) : (
+            <span className="search-result__no-jump">No source anchor available</span>
+          )}
+        </div>
       </footer>
     </article>
   )
@@ -514,9 +560,11 @@ export function SearchPage() {
   const semanticMode = (applied ?? draft).mode === 'semantic' || (applied ?? draft).mode === 'hybrid'
   const acceptedEvaluation = status.data?.acceptance
   const latestEvaluation = status.data?.latest_evaluation
-  const latestCandidateRejected = latestEvaluation?.passed === false
+  const manualOverride = activeManualOverride(status.data?.active?.audit)
+  const latestEvaluationFailed = latestEvaluation?.passed === false
+  const latestCandidateRejected = latestEvaluationFailed && !manualOverride
   const semanticIndexStale = Boolean(status.data?.needs_rebuild)
-  const displayedEvaluation = latestCandidateRejected
+  const displayedEvaluation = latestEvaluationFailed
     ? latestEvaluation
     : acceptedEvaluation ?? latestEvaluation
   const submit = (event: FormEvent) => {
@@ -556,7 +604,11 @@ export function SearchPage() {
                 <span className="sr-only">Semantic retrieval quality gate: </span>{retrievalGateSummary(displayedEvaluation)}
               </p>
             ) : null}
-            {latestCandidateRejected ? (
+            {manualOverride ? (
+              <p className="search-index-card__override" role="status">
+                {overrideModelLabel(status.data?.active?.model_name ?? 'The English semantic model')} is active by explicit local override; the previous result-pool compatibility gate remains recorded as failed. Reason: {manualOverride.reason}
+              </p>
+            ) : latestCandidateRejected ? (
               <p className="search-index-card__warning" role="status">
                 Latest candidate was rejected by the retrieval quality gate.
                 {status.data?.ready ? ' The prior ready index remains active.' : ' Semantic modes remain disabled.'}

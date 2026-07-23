@@ -7,6 +7,7 @@ import math
 import os
 import re
 import stat
+import threading
 import unicodedata
 import uuid
 from collections.abc import Iterable, Iterator, Sequence
@@ -14,7 +15,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from importlib.metadata import version
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Protocol, cast
 
 import lancedb  # type: ignore[import-untyped]
@@ -71,6 +72,7 @@ from meta_archive.services.direct_conflict_ranker import (
 )
 from meta_archive.services.identifiers import stable_id
 from meta_archive.services.model_cache import (
+    MODEL_ARTIFACT_FINGERPRINT_SCHEMA,
     pinned_transformers_artifact,
     pinned_transformers_snapshot,
 )
@@ -109,10 +111,28 @@ EMBEDDING_PIPELINE_VERSION = "semantic-text-embedding-v1"
 TRANSFORMERS_MAX_SEQUENCE_TOKENS = 512
 TRANSFORMERS_POOLING = "attention-mask-mean"
 TRANSFORMERS_PRECISION = "float32"
+TRANSFORMERS_MICROBATCH_SIZE = 16
+TRANSFORMERS_SORT_BUCKET_SIZE = 128
+FASTEMBED_PROVIDER = "fastembed"
+TRANSFORMERS_PROVIDER = "transformers"
+INJECTED_TEXT_EMBEDDER_PROVIDER = "injected-text-embedder-contract"
+PROVIDER_DECLARED_POOLING = "provider-declared"
+CLS_POOLING = "cls"
+INPUT_ORDER_BATCHING = "input-order"
+STABLE_TOKEN_LENGTH_BATCHING = "stable-token-length-ascending-restored"
+LEGACY_GTE_AUTO_EMBEDDING_MODEL_ALIAS = "gte-modernbert-base"
+AUTO_EMBEDDING_MODEL_ALIAS = "bge-base-en-v1.5"
+LEGACY_GTE_SEMANTIC_MODEL_SELECTION_POLICY = "english-gte-default-explicit-multilingual-override"
+SEMANTIC_MODEL_SELECTION_POLICY = "english-default-explicit-multilingual-override-v1"
 
-SEMANTIC_IR_EVALUATOR_VERSION = "semantic-ir-acceptance-v6"
+PREVIOUS_SEMANTIC_IR_EVALUATOR_VERSION = "semantic-ir-acceptance-v7"
+SEMANTIC_IR_EVALUATOR_VERSION = "semantic-ir-acceptance-v8"
 SEMANTIC_RANKING_PIPELINE_VERSION = "runtime-search-v2"
 SEMANTIC_IR_K = 10
+SEMANTIC_CANDIDATE_RECALL_KS = (50, 200)
+SEMANTIC_UPGRADE_NON_REGRESSION_TOLERANCE = 0.02
+SEMANTIC_UPGRADE_DEMONSTRATED_IMPROVEMENT = 0.02
+SEMANTIC_UPGRADE_METRICS = ("recall_at_k", "mrr", "ndcg_at_k")
 KNOWN_ITEM_QUERY_CAP = 48
 FEEDBACK_QUERY_CAP = 64
 FEEDBACK_JUDGMENT_CAP_PER_QUERY = 200
@@ -160,6 +180,77 @@ class EmbeddingModelSpec:
     query_prefix: str
     language_scope: str
     approximate_download_gb: float
+    provider: str = INJECTED_TEXT_EMBEDDER_PROVIDER
+    pooling: str = PROVIDER_DECLARED_POOLING
+    max_sequence_tokens: int | None = None
+    precision: str = "provider-declared"
+    batch_order: str = INPUT_ORDER_BATCHING
+
+
+@dataclass(frozen=True, slots=True)
+class FastEmbedArtifactSpec:
+    repository: str
+    revision: str
+    model_file: str
+    required_files: tuple[str, ...]
+    custom_pooling: str | None = None
+    custom_normalization: bool | None = None
+    application_max_tokens: int | None = None
+
+
+_FASTEMBED_REQUIRED_METADATA = (
+    "config.json",
+    "special_tokens_map.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+)
+
+
+PINNED_FASTEMBED_ARTIFACTS: dict[str, FastEmbedArtifactSpec] = {
+    "bge-base-en-v1.5": FastEmbedArtifactSpec(
+        repository="qdrant/bge-base-en-v1.5-onnx-q",
+        revision="738cad1c108e2f23649db9e44b2eab988626493b",
+        model_file="model_optimized.onnx",
+        required_files=(*_FASTEMBED_REQUIRED_METADATA, "model_optimized.onnx"),
+    ),
+    "mxbai-embed-large-v1": FastEmbedArtifactSpec(
+        repository="mixedbread-ai/mxbai-embed-large-v1",
+        revision="b33106f585b9ce46904ad7443a3b52b7a63e231c",
+        model_file="onnx/model.onnx",
+        required_files=(*_FASTEMBED_REQUIRED_METADATA, "onnx/model.onnx"),
+    ),
+    "nomic-embed-text-v1.5": FastEmbedArtifactSpec(
+        repository="nomic-ai/nomic-embed-text-v1.5",
+        revision="e9b6763023c676ca8431644204f50c2b100d9aab",
+        model_file="onnx/model.onnx",
+        required_files=(*_FASTEMBED_REQUIRED_METADATA, "onnx/model.onnx"),
+        application_max_tokens=512,
+    ),
+    "e5-base-v2": FastEmbedArtifactSpec(
+        repository="intfloat/e5-base-v2",
+        revision="f52bf8ec8c7124536f0efb74aca902b2995e5bcd",
+        model_file="onnx/model.onnx",
+        required_files=(*_FASTEMBED_REQUIRED_METADATA, "onnx/model.onnx"),
+        custom_pooling="MEAN",
+        custom_normalization=True,
+    ),
+    "e5-small-v2": FastEmbedArtifactSpec(
+        repository="intfloat/e5-small-v2",
+        revision="ffb93f3bd4047442299a41ebb6fa998a38507c52",
+        model_file="model.onnx",
+        required_files=(*_FASTEMBED_REQUIRED_METADATA, "model.onnx"),
+        custom_pooling="MEAN",
+        custom_normalization=True,
+    ),
+    "snowflake-arctic-embed-l": FastEmbedArtifactSpec(
+        repository="snowflake/snowflake-arctic-embed-l",
+        revision="d8fb21ca8d905d2832ee8b96c894d3298964346b",
+        model_file="onnx/model.onnx",
+        required_files=(*_FASTEMBED_REQUIRED_METADATA, "onnx/model.onnx"),
+    ),
+}
+_FASTEMBED_CUSTOM_MODEL_LOCK = threading.Lock()
+_FASTEMBED_CUSTOM_MODEL_OWNERS: dict[str, object] = {}
 
 
 MODEL_SPECS: dict[str, EmbeddingModelSpec] = {
@@ -172,6 +263,66 @@ MODEL_SPECS: dict[str, EmbeddingModelSpec] = {
         query_prefix="Represent this sentence for searching relevant passages: ",
         language_scope="English",
         approximate_download_gb=0.067,
+        provider=FASTEMBED_PROVIDER,
+        pooling=PROVIDER_DECLARED_POOLING,
+        max_sequence_tokens=None,
+        precision="provider-declared-onnx",
+    ),
+    "bge-base-en-v1.5": EmbeddingModelSpec(
+        alias="bge-base-en-v1.5",
+        model_name="BAAI/bge-base-en-v1.5",
+        model_revision="738cad1c108e2f23649db9e44b2eab988626493b",
+        dimensions=768,
+        document_prefix="",
+        query_prefix="Represent this sentence for searching relevant passages: ",
+        language_scope="English",
+        approximate_download_gb=0.22,
+        provider=FASTEMBED_PROVIDER,
+        pooling=CLS_POOLING,
+        max_sequence_tokens=512,
+        precision="float16-onnx",
+    ),
+    "e5-base-v2": EmbeddingModelSpec(
+        alias="e5-base-v2",
+        model_name="intfloat/e5-base-v2",
+        model_revision="f52bf8ec8c7124536f0efb74aca902b2995e5bcd",
+        dimensions=768,
+        document_prefix="passage: ",
+        query_prefix="query: ",
+        language_scope="English",
+        approximate_download_gb=0.44,
+        provider=FASTEMBED_PROVIDER,
+        pooling=TRANSFORMERS_POOLING,
+        max_sequence_tokens=512,
+        precision="float32-onnx",
+    ),
+    "e5-small-v2": EmbeddingModelSpec(
+        alias="e5-small-v2",
+        model_name="intfloat/e5-small-v2",
+        model_revision="ffb93f3bd4047442299a41ebb6fa998a38507c52",
+        dimensions=384,
+        document_prefix="passage: ",
+        query_prefix="query: ",
+        language_scope="English",
+        approximate_download_gb=0.134,
+        provider=FASTEMBED_PROVIDER,
+        pooling=TRANSFORMERS_POOLING,
+        max_sequence_tokens=512,
+        precision="float32-onnx",
+    ),
+    "mxbai-embed-large-v1": EmbeddingModelSpec(
+        alias="mxbai-embed-large-v1",
+        model_name="mixedbread-ai/mxbai-embed-large-v1",
+        model_revision="b33106f585b9ce46904ad7443a3b52b7a63e231c",
+        dimensions=1024,
+        document_prefix="",
+        query_prefix="Represent this sentence for searching relevant passages: ",
+        language_scope="English",
+        approximate_download_gb=1.34,
+        provider=FASTEMBED_PROVIDER,
+        pooling=CLS_POOLING,
+        max_sequence_tokens=512,
+        precision="float32-onnx",
     ),
     "multilingual-e5-small": EmbeddingModelSpec(
         alias="multilingual-e5-small",
@@ -182,6 +333,53 @@ MODEL_SPECS: dict[str, EmbeddingModelSpec] = {
         query_prefix="query: ",
         language_scope="Multilingual, 94 languages",
         approximate_download_gb=0.47,
+        provider=TRANSFORMERS_PROVIDER,
+        pooling=TRANSFORMERS_POOLING,
+        max_sequence_tokens=TRANSFORMERS_MAX_SEQUENCE_TOKENS,
+        precision=TRANSFORMERS_PRECISION,
+    ),
+    "nomic-embed-text-v1.5": EmbeddingModelSpec(
+        alias="nomic-embed-text-v1.5",
+        model_name="nomic-ai/nomic-embed-text-v1.5",
+        model_revision="e9b6763023c676ca8431644204f50c2b100d9aab",
+        dimensions=768,
+        document_prefix="search_document: ",
+        query_prefix="search_query: ",
+        language_scope="English",
+        approximate_download_gb=0.55,
+        provider=FASTEMBED_PROVIDER,
+        pooling=TRANSFORMERS_POOLING,
+        max_sequence_tokens=512,
+        precision="float32-onnx",
+    ),
+    "gte-modernbert-base": EmbeddingModelSpec(
+        alias="gte-modernbert-base",
+        model_name="Alibaba-NLP/gte-modernbert-base",
+        model_revision="e7f32e3c00f91d699e8c43b53106206bcc72bb22",
+        dimensions=768,
+        document_prefix="",
+        query_prefix="",
+        language_scope="English",
+        approximate_download_gb=0.288,
+        provider=TRANSFORMERS_PROVIDER,
+        pooling=CLS_POOLING,
+        max_sequence_tokens=TRANSFORMERS_MAX_SEQUENCE_TOKENS,
+        precision=TRANSFORMERS_PRECISION,
+        batch_order=STABLE_TOKEN_LENGTH_BATCHING,
+    ),
+    "snowflake-arctic-embed-l": EmbeddingModelSpec(
+        alias="snowflake-arctic-embed-l",
+        model_name="snowflake/snowflake-arctic-embed-l",
+        model_revision="d8fb21ca8d905d2832ee8b96c894d3298964346b",
+        dimensions=1024,
+        document_prefix="",
+        query_prefix="Represent this sentence for searching relevant passages: ",
+        language_scope="English",
+        approximate_download_gb=1.34,
+        provider=FASTEMBED_PROVIDER,
+        pooling=CLS_POOLING,
+        max_sequence_tokens=512,
+        precision="float32-onnx",
     ),
 }
 
@@ -233,6 +431,10 @@ class SemanticIndexAcceptanceError(RuntimeError):
         self.job_id = job_id
         self.config_hash = config_hash
         self.evaluation = evaluation
+
+
+class SemanticIndexManualActivationError(RuntimeError):
+    """Raised when an explicit rejected-candidate activation fails closed."""
 
 
 def _open_private_semantic_lock_file(layout: ArchiveLayout) -> tuple[int, int]:
@@ -385,6 +587,178 @@ def semantic_index_lock(layout: ArchiveLayout) -> Iterator[None]:
             os.close(directory_descriptor)
 
 
+def _fastembed_artifact_identity(artifact: FastEmbedArtifactSpec) -> dict[str, Any]:
+    identity: dict[str, Any] = {
+        "kind": "huggingface_snapshot",
+        "repository": artifact.repository,
+        "revision": artifact.revision,
+        "model_file": artifact.model_file,
+        "required_files": list(artifact.required_files),
+        "fingerprint_schema": MODEL_ARTIFACT_FINGERPRINT_SCHEMA,
+    }
+    if artifact.custom_pooling is not None:
+        identity["fastembed_custom_model"] = {
+            "pooling": artifact.custom_pooling,
+            "normalization": artifact.custom_normalization,
+        }
+    if artifact.application_max_tokens is not None:
+        identity["application_max_tokens"] = artifact.application_max_tokens
+    return identity
+
+
+def _validate_fastembed_artifact_declaration(artifact: FastEmbedArtifactSpec) -> None:
+    if not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*",
+        artifact.repository,
+    ):
+        raise ValueError("Pinned FastEmbed artifact repository is invalid")
+    if not re.fullmatch(r"[0-9a-f]{40}", artifact.revision):
+        raise ValueError("Pinned FastEmbed artifact revision must be a full commit SHA")
+    if not artifact.required_files or len(set(artifact.required_files)) != len(
+        artifact.required_files
+    ):
+        raise ValueError("Pinned FastEmbed artifact required files are invalid")
+    for raw_path in artifact.required_files:
+        path = PurePosixPath(raw_path)
+        if (
+            not raw_path
+            or "\\" in raw_path
+            or path.is_absolute()
+            or not path.parts
+            or path.as_posix() != raw_path
+            or ".." in path.parts
+        ):
+            raise ValueError("Pinned FastEmbed artifact path is unsafe")
+    if artifact.model_file not in artifact.required_files:
+        raise ValueError("Pinned FastEmbed artifact does not include its model file")
+    if artifact.application_max_tokens is not None and artifact.application_max_tokens < 1:
+        raise ValueError("Pinned FastEmbed application token limit must be positive")
+    custom_values = (artifact.custom_pooling, artifact.custom_normalization)
+    if custom_values == (None, None):
+        return
+    if artifact.custom_pooling != "MEAN" or artifact.custom_normalization is not True:
+        raise ValueError("Pinned FastEmbed custom-model postprocessing is unsupported")
+
+
+def _ensure_fastembed_custom_model(
+    text_embedding_class: Any,
+    spec: EmbeddingModelSpec,
+    artifact: FastEmbedArtifactSpec,
+) -> None:
+    if artifact.custom_pooling is None:
+        return
+    from fastembed.common.model_description import ModelSource, PoolingType
+
+    with _FASTEMBED_CUSTOM_MODEL_LOCK:
+        candidates = [
+            candidate
+            for candidate in text_embedding_class.list_supported_models()
+            if candidate.get("model") == spec.model_name
+        ]
+        owner = _FASTEMBED_CUSTOM_MODEL_OWNERS.get(spec.model_name)
+        if candidates:
+            if owner is not text_embedding_class:
+                raise RuntimeError(
+                    "FastEmbed custom model alias was registered outside this loader"
+                )
+            return
+        if owner is text_embedding_class:
+            raise RuntimeError("FastEmbed custom model registration disappeared")
+        text_embedding_class.add_custom_model(
+            model=spec.model_name,
+            pooling=PoolingType.MEAN,
+            normalization=True,
+            sources=ModelSource(hf=artifact.repository),
+            dim=spec.dimensions,
+            model_file=artifact.model_file,
+            description=f"English {spec.alias} retrieval embeddings",
+            license="mit",
+            size_in_gb=spec.approximate_download_gb,
+        )
+        _FASTEMBED_CUSTOM_MODEL_OWNERS[spec.model_name] = text_embedding_class
+
+
+def _validate_fastembed_registry_artifact(
+    text_embedding_class: Any,
+    spec: EmbeddingModelSpec,
+    artifact: FastEmbedArtifactSpec,
+) -> None:
+    candidates = [
+        candidate
+        for candidate in text_embedding_class.list_supported_models()
+        if candidate.get("model") == spec.model_name
+    ]
+    if len(candidates) != 1:
+        raise RuntimeError("Installed FastEmbed does not expose the pinned model alias")
+    candidate = candidates[0]
+    sources = candidate.get("sources")
+    source_repository = sources.get("hf") if isinstance(sources, dict) else None
+    if (
+        source_repository != artifact.repository
+        or candidate.get("model_file") != artifact.model_file
+        or candidate.get("dim") != spec.dimensions
+    ):
+        raise RuntimeError("Installed FastEmbed artifact declaration does not match the pin")
+
+
+def _pinned_fastembed_artifact_spec(
+    spec: EmbeddingModelSpec,
+) -> FastEmbedArtifactSpec | None:
+    artifact = PINNED_FASTEMBED_ARTIFACTS.get(spec.alias)
+    if artifact is None:
+        return None
+    _validate_fastembed_artifact_declaration(artifact)
+    if spec.provider != FASTEMBED_PROVIDER:
+        raise ValueError("Pinned FastEmbed artifacts require the FastEmbed provider")
+    if spec.model_revision != artifact.revision:
+        raise ValueError("Pinned FastEmbed model revision does not match its artifact revision")
+    if artifact.custom_pooling == "MEAN" and spec.pooling != TRANSFORMERS_POOLING:
+        raise ValueError("Pinned FastEmbed mean-pooling model specification is inconsistent")
+    if (
+        artifact.application_max_tokens is not None
+        and spec.max_sequence_tokens != artifact.application_max_tokens
+    ):
+        raise ValueError("Pinned FastEmbed application token limit is inconsistent")
+    return artifact
+
+
+def _pinned_fastembed_snapshot(
+    spec: EmbeddingModelSpec,
+    *,
+    cache_dir: Path,
+    local_files_only: bool,
+) -> Path:
+    artifact = _pinned_fastembed_artifact_spec(spec)
+    if artifact is None:
+        raise ValueError("Embedding model does not declare a pinned FastEmbed artifact")
+    if local_files_only:
+        return pinned_transformers_snapshot(
+            cache_dir,
+            model_name=artifact.repository,
+            model_revision=artifact.revision,
+        )
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    from huggingface_hub import snapshot_download
+
+    downloaded = Path(
+        snapshot_download(
+            repo_id=artifact.repository,
+            revision=artifact.revision,
+            cache_dir=cache_dir,
+            allow_patterns=list(artifact.required_files),
+        )
+    )
+    snapshot = pinned_transformers_snapshot(
+        cache_dir,
+        model_name=artifact.repository,
+        model_revision=artifact.revision,
+    )
+    if downloaded.resolve() != snapshot.resolve():
+        raise RuntimeError("Pinned FastEmbed download resolved to an unexpected snapshot")
+    return snapshot
+
+
 class FastEmbedTextEmbedder:
     def __init__(
         self,
@@ -393,7 +767,8 @@ class FastEmbedTextEmbedder:
         cache_dir: str,
         local_files_only: bool = False,
     ) -> None:
-        if local_files_only:
+        artifact_spec = _pinned_fastembed_artifact_spec(spec)
+        if local_files_only and artifact_spec is None:
             # FastEmbed's installed cache manager can create/delete temporary cache entries even
             # when asked for local-only resolution. Acceptance mode must never invoke it.
             raise RuntimeError(
@@ -402,15 +777,71 @@ class FastEmbedTextEmbedder:
         from fastembed import TextEmbedding
 
         self.spec = spec
-        self._model = TextEmbedding(
-            model_name=spec.model_name,
-            cache_dir=cache_dir,
-            threads=max(1, min(8, settings.embedding_batch_size // 16)),
-        )
+        if artifact_spec is not None:
+            _ensure_fastembed_custom_model(TextEmbedding, spec, artifact_spec)
+            _validate_fastembed_registry_artifact(TextEmbedding, spec, artifact_spec)
+        model_options: dict[str, Any] = {
+            "model_name": spec.model_name,
+            "cache_dir": cache_dir,
+            "threads": max(1, min(8, settings.embedding_batch_size // 16)),
+        }
+        pinned_before = None
+        snapshot = None
+        if artifact_spec is not None:
+            cache_path = Path(cache_dir)
+            snapshot = _pinned_fastembed_snapshot(
+                spec,
+                cache_dir=cache_path,
+                local_files_only=local_files_only,
+            )
+            pinned_before = pinned_transformers_artifact(
+                cache_path,
+                model_name=artifact_spec.repository,
+                model_revision=artifact_spec.revision,
+            )
+            missing = [
+                required
+                for required in artifact_spec.required_files
+                if not (snapshot / required).is_file()
+            ]
+            if missing:
+                raise RuntimeError(
+                    "Pinned FastEmbed snapshot is incomplete: " + ", ".join(sorted(missing))
+                )
+            model_options["specific_model_path"] = str(snapshot)
+            # The explicit path already bypasses FastEmbed's cache manager. Keep its own
+            # local-only guard enabled as defense in depth for lazy loads and worker processes.
+            model_options["local_files_only"] = True
+        self._model = TextEmbedding(**model_options)
         model = getattr(self._model, "model", None)
+        if artifact_spec is not None and artifact_spec.application_max_tokens is not None:
+            tokenizer = getattr(model, "tokenizer", None)
+            enable_truncation = getattr(tokenizer, "enable_truncation", None)
+            if not callable(enable_truncation):
+                raise RuntimeError("FastEmbed did not expose its tokenizer truncation control")
+            enable_truncation(max_length=artifact_spec.application_max_tokens)
+            truncation = getattr(tokenizer, "truncation", None)
+            if (
+                not isinstance(truncation, dict)
+                or truncation.get("max_length") != artifact_spec.application_max_tokens
+            ):
+                raise RuntimeError("FastEmbed did not apply the required token limit")
         model_dir = getattr(model, "_model_dir", None)
         self._model_dir = Path(model_dir).resolve() if model_dir else None
         self._artifact_fingerprint: str | None = None
+        if artifact_spec is not None:
+            assert snapshot is not None
+            assert pinned_before is not None
+            if self._model_dir != snapshot.resolve():
+                raise RuntimeError("FastEmbed did not load the exact pinned snapshot")
+            pinned_after = pinned_transformers_artifact(
+                Path(cache_dir),
+                model_name=artifact_spec.repository,
+                model_revision=artifact_spec.revision,
+            )
+            if pinned_after != pinned_before:
+                raise RuntimeError("Pinned FastEmbed snapshot changed while loading")
+            self._artifact_fingerprint = f"sha256:{pinned_after.fingerprint_sha256}"
 
     @staticmethod
     def _normalized(vector: Any) -> list[float]:
@@ -468,6 +899,16 @@ class TransformersTextEmbedder:
         cache_dir: str,
         local_files_only: bool = False,
     ) -> None:
+        if spec.provider != TRANSFORMERS_PROVIDER:
+            raise ValueError("Transformers embedder requires a Transformers model specification")
+        if spec.pooling not in {TRANSFORMERS_POOLING, CLS_POOLING}:
+            raise ValueError(f"Unsupported Transformers pooling strategy: {spec.pooling}")
+        if spec.max_sequence_tokens is None or spec.max_sequence_tokens < 1:
+            raise ValueError("Transformers model specification requires a positive token limit")
+        if spec.precision != TRANSFORMERS_PRECISION:
+            raise ValueError("Transformers text embeddings currently require float32 precision")
+        if spec.batch_order not in {INPUT_ORDER_BATCHING, STABLE_TOKEN_LENGTH_BATCHING}:
+            raise ValueError(f"Unsupported Transformers batching order: {spec.batch_order}")
         self.spec = spec
         self._cache_dir = Path(cache_dir)
         model_source: str | Path
@@ -494,35 +935,79 @@ class TransformersTextEmbedder:
         )
         self._model = AutoModel.from_pretrained(
             model_source,
+            dtype=torch.float32,
             **load_options,
         )
         self._model.to("cpu")
+        self._model.float()
         self._model.eval()
         torch.set_num_threads(max(1, min(8, torch.get_num_threads())))
         self._artifact_fingerprint: str | None = None
 
-    def _embed(self, texts: Sequence[str]) -> list[list[float]]:
+    def _token_lengths(self, texts: Sequence[str]) -> list[int]:
+        encoded = self._tokenizer(
+            list(texts),
+            add_special_tokens=True,
+            max_length=self.spec.max_sequence_tokens,
+            padding=False,
+            truncation=True,
+            return_length=True,
+        )
+        raw_lengths = encoded.get("length")
+        if raw_lengths is None:
+            raise RuntimeError("Tokenizer did not return input lengths for stable batching")
+        if hasattr(raw_lengths, "tolist"):
+            raw_lengths = raw_lengths.tolist()
+        lengths = [int(length) for length in raw_lengths]
+        if len(lengths) != len(texts):
+            raise RuntimeError("Tokenizer returned an invalid number of input lengths")
+        return lengths
+
+    def _embed_ordered(self, texts: Sequence[str]) -> list[list[float]]:
         import torch
 
         vectors: list[list[float]] = []
-        # A bounded microbatch keeps the 512-token transformer path within the CPU-first memory
-        # envelope even when the outer indexing batch is configured much larger.
-        for offset in range(0, len(texts), 16):
-            batch = list(texts[offset : offset + 16])
+        for offset in range(0, len(texts), TRANSFORMERS_MICROBATCH_SIZE):
+            batch = list(texts[offset : offset + TRANSFORMERS_MICROBATCH_SIZE])
             encoded = self._tokenizer(
                 batch,
-                max_length=TRANSFORMERS_MAX_SEQUENCE_TOKENS,
+                max_length=self.spec.max_sequence_tokens,
                 padding=True,
                 truncation=True,
                 return_tensors="pt",
             )
             with torch.inference_mode():
                 hidden = self._model(**encoded).last_hidden_state
-            attention = encoded["attention_mask"].unsqueeze(-1).bool()
-            masked = hidden.masked_fill(~attention, 0.0)
-            pooled = masked.sum(dim=1) / attention.sum(dim=1).clamp(min=1)
+            if self.spec.pooling == CLS_POOLING:
+                pooled = hidden[:, 0]
+            else:
+                attention = encoded["attention_mask"].unsqueeze(-1).bool()
+                masked = hidden.masked_fill(~attention, 0.0)
+                pooled = masked.sum(dim=1) / attention.sum(dim=1).clamp(min=1)
             normalized = torch.nn.functional.normalize(pooled, p=2, dim=1)
             vectors.extend(cast(list[list[float]], normalized.cpu().tolist()))
+        return vectors
+
+    def _embed(self, texts: Sequence[str]) -> list[list[float]]:
+        if self.spec.batch_order == INPUT_ORDER_BATCHING or len(texts) < 2:
+            return self._embed_ordered(texts)
+
+        vectors: list[list[float]] = []
+        # Fixed 128-text buckets make the emitted vectors invariant between the production
+        # outer batch sizes (128 and 512), while length-sorted microbatches sharply reduce
+        # padding. Each bucket is restored to caller order before it is returned.
+        for offset in range(0, len(texts), TRANSFORMERS_SORT_BUCKET_SIZE):
+            bucket = list(texts[offset : offset + TRANSFORMERS_SORT_BUCKET_SIZE])
+            lengths = self._token_lengths(bucket)
+            order = sorted(range(len(bucket)), key=lengths.__getitem__)
+            ordered_vectors = self._embed_ordered([bucket[index] for index in order])
+            vectors.extend(
+                vector
+                for _index, vector in sorted(
+                    zip(order, ordered_vectors, strict=True),
+                    key=lambda item: item[0],
+                )
+            )
         return vectors
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
@@ -552,7 +1037,7 @@ def default_text_embedder(
     *,
     local_files_only: bool = False,
 ) -> TextEmbedder:
-    if spec.alias == "multilingual-e5-small":
+    if spec.provider == TRANSFORMERS_PROVIDER:
         if local_files_only:
             return TransformersTextEmbedder(
                 spec,
@@ -563,6 +1048,8 @@ def default_text_embedder(
             spec,
             cache_dir=str(layout.models / "transformers"),
         )
+    if spec.provider not in {FASTEMBED_PROVIDER, INJECTED_TEXT_EMBEDDER_PROVIDER}:
+        raise ValueError(f"Unsupported embedding provider: {spec.provider}")
     if local_files_only:
         return FastEmbedTextEmbedder(
             spec,
@@ -573,6 +1060,26 @@ def default_text_embedder(
         spec,
         cache_dir=str(layout.models / "fastembed"),
     )
+
+
+def _validated_embedding_batch_size(
+    spec: EmbeddingModelSpec,
+    requested_batch_size: int | None,
+) -> int:
+    actual_batch_size = (
+        settings.embedding_batch_size if requested_batch_size is None else requested_batch_size
+    )
+    if actual_batch_size < 1:
+        raise ValueError("Semantic embedding batch size must be positive")
+    if (
+        spec.batch_order == STABLE_TOKEN_LENGTH_BATCHING
+        and actual_batch_size % TRANSFORMERS_SORT_BUCKET_SIZE != 0
+    ):
+        raise ValueError(
+            "Length-sorted semantic embedding batch size must be divisible by "
+            f"{TRANSFORMERS_SORT_BUCKET_SIZE}"
+        )
+    return actual_batch_size
 
 
 @dataclass(frozen=True, slots=True)
@@ -628,7 +1135,7 @@ class WindowBuildSummary:
 
     @property
     def recommended_model(self) -> str:
-        return "multilingual-e5-small" if self.non_latin_ratio >= 0.05 else "bge-small-en-v1.5"
+        return AUTO_EMBEDDING_MODEL_ALIAS
 
 
 @dataclass(frozen=True, slots=True)
@@ -640,6 +1147,23 @@ class SemanticIndexSummary:
     embedded_count: int
     resumed: bool
     model_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticManualActivationSummary:
+    activation_job_id: str
+    config_hash: str
+    previous_active_config_id: str
+    vector_table: str
+    window_count: int
+    model_name: str
+    invalidated_conflict_run_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class _SemanticEvaluationRanking:
+    cosine_ids: tuple[str, ...]
+    reranked_ids: tuple[str, ...]
 
 
 def embedding_model_spec(alias: str | None = None) -> EmbeddingModelSpec:
@@ -686,43 +1210,67 @@ def embedding_implementation_identity(spec: EmbeddingModelSpec) -> dict[str, Any
         "query_prefix": spec.query_prefix,
         "normalization": "l2",
     }
-    if spec.alias == "multilingual-e5-small":
-        return {
+    if spec.provider == TRANSFORMERS_PROVIDER:
+        if spec.pooling not in {TRANSFORMERS_POOLING, CLS_POOLING}:
+            raise ValueError(f"Unsupported Transformers pooling strategy: {spec.pooling}")
+        if spec.max_sequence_tokens is None or spec.max_sequence_tokens < 1:
+            raise ValueError("Transformers model specification requires a positive token limit")
+        if spec.batch_order not in {INPUT_ORDER_BATCHING, STABLE_TOKEN_LENGTH_BATCHING}:
+            raise ValueError(f"Unsupported Transformers batching order: {spec.batch_order}")
+        identity = {
             **common,
-            "provider": "transformers",
+            "provider": TRANSFORMERS_PROVIDER,
             "device": "cpu",
-            "precision": TRANSFORMERS_PRECISION,
-            "pooling": TRANSFORMERS_POOLING,
-            "max_sequence_tokens": TRANSFORMERS_MAX_SEQUENCE_TOKENS,
+            "precision": spec.precision,
+            "pooling": spec.pooling,
+            "max_sequence_tokens": spec.max_sequence_tokens,
             "truncation": True,
         }
-    if spec.alias == "bge-small-en-v1.5":
+        if spec.batch_order == STABLE_TOKEN_LENGTH_BATCHING:
+            identity["document_batching"] = {
+                "microbatch_size": TRANSFORMERS_MICROBATCH_SIZE,
+                "sort_bucket_size": TRANSFORMERS_SORT_BUCKET_SIZE,
+                "sort_order": STABLE_TOKEN_LENGTH_BATCHING,
+                "restore_input_order": True,
+            }
+        return identity
+    if spec.provider == FASTEMBED_PROVIDER:
+        fastembed_identity: dict[str, Any] = {
+            **common,
+            "provider": FASTEMBED_PROVIDER,
+            "precision": spec.precision,
+            "pooling": spec.pooling,
+        }
+        artifact = _pinned_fastembed_artifact_spec(spec)
+        if artifact is not None:
+            fastembed_identity["artifact_source"] = _fastembed_artifact_identity(artifact)
+            fastembed_identity["max_sequence_tokens"] = spec.max_sequence_tokens
+            fastembed_identity["truncation"] = True
+        return fastembed_identity
+    if spec.provider == INJECTED_TEXT_EMBEDDER_PROVIDER:
         return {
             **common,
-            "provider": "fastembed",
-            "precision": "provider-declared-onnx",
-            "pooling": "provider-declared",
+            "provider": INJECTED_TEXT_EMBEDDER_PROVIDER,
+            "precision": spec.precision,
+            "pooling": spec.pooling,
         }
-    return {
-        **common,
-        "provider": "injected-text-embedder-contract",
-        "precision": "provider-declared",
-        "pooling": "provider-declared",
-    }
+    raise ValueError(f"Unsupported embedding provider: {spec.provider}")
 
 
 def embedding_backend(spec: EmbeddingModelSpec) -> tuple[str, str]:
     """Return the recorded implementation identity for an embedding specification."""
 
-    if spec.alias == "multilingual-e5-small":
+    if spec.provider == TRANSFORMERS_PROVIDER:
         return (
             "lancedb-transformers",
             f"lancedb-{version('lancedb')}:transformers-{version('transformers')}:torch-{version('torch')}",
         )
-    return (
-        "lancedb-fastembed",
-        f"lancedb-{version('lancedb')}:fastembed-{version('fastembed')}",
-    )
+    if spec.provider in {FASTEMBED_PROVIDER, INJECTED_TEXT_EMBEDDER_PROVIDER}:
+        return (
+            "lancedb-fastembed",
+            f"lancedb-{version('lancedb')}:fastembed-{version('fastembed')}",
+        )
+    raise ValueError(f"Unsupported embedding provider: {spec.provider}")
 
 
 def embedding_artifact_fingerprint(embedder: TextEmbedder) -> str:
@@ -1251,7 +1799,7 @@ def _reranked_vector_ids(
     filters: Any,
     config_hash: str,
     direct_conflict_ranker: DirectConflictRanker | None = None,
-) -> list[str]:
+) -> _SemanticEvaluationRanking:
     """Mirror the runtime's exact-cosine candidate pool and local cross-encoder ordering."""
 
     from meta_archive.services.search import (
@@ -1293,7 +1841,10 @@ def _reranked_vector_ids(
         reranker,
         direct_conflict_ranker=direct_conflict_ranker,
     )
-    return [window_id for window_id, _score, _cross, _cosine in ranking.rows]
+    return _SemanticEvaluationRanking(
+        cosine_ids=tuple(valid_ordered),
+        reranked_ids=tuple(window_id for window_id, _score, _cross, _cosine in ranking.rows),
+    )
 
 
 def _argument_direct_conflict_evaluation(
@@ -1683,6 +2234,331 @@ def _direct_conflict_development_evaluation(
     }
 
 
+def _candidate_recall_summary(
+    rankings: Sequence[Sequence[str]],
+    relevance_sets: Sequence[set[str]],
+) -> dict[str, int | float]:
+    summary: dict[str, int | float] = {"query_count": len(rankings)}
+    for k in SEMANTIC_CANDIDATE_RECALL_KS:
+        metrics = retrieval_metrics(rankings, relevance_sets, k=k)
+        summary[f"recall_at_{k}"] = float(metrics["recall_at_k"])
+    return summary
+
+
+def _validated_upgrade_metrics(value: object) -> dict[str, float] | None:
+    if not isinstance(value, dict):
+        return None
+    metrics: dict[str, float] = {}
+    for name in SEMANTIC_UPGRADE_METRICS:
+        metric = value.get(name)
+        if (
+            not isinstance(metric, (int, float))
+            or isinstance(metric, bool)
+            or not math.isfinite(float(metric))
+        ):
+            return None
+        metrics[name] = float(metric)
+    return metrics
+
+
+def _semantic_upgrade_metric_comparison(
+    candidate_metrics_value: object,
+    incumbent_metrics_value: object,
+) -> dict[str, Any]:
+    candidate_metrics = _validated_upgrade_metrics(candidate_metrics_value)
+    incumbent_metrics = _validated_upgrade_metrics(incumbent_metrics_value)
+    if candidate_metrics is None or incumbent_metrics is None:
+        raise ValueError("Semantic upgrade comparison requires finite retrieval metrics")
+    metric_comparisons: dict[str, dict[str, float | bool]] = {}
+    for name in SEMANTIC_UPGRADE_METRICS:
+        candidate = candidate_metrics[name]
+        incumbent = incumbent_metrics[name]
+        delta = candidate - incumbent
+        regression = incumbent - candidate
+        metric_comparisons[name] = {
+            "candidate": candidate,
+            "incumbent": incumbent,
+            "delta": delta,
+            "regression_exceeds_tolerance": (
+                regression > SEMANTIC_UPGRADE_NON_REGRESSION_TOLERANCE
+                and not math.isclose(
+                    regression,
+                    SEMANTIC_UPGRADE_NON_REGRESSION_TOLERANCE,
+                    rel_tol=0.0,
+                    abs_tol=1e-12,
+                )
+            ),
+            "demonstrated_improvement": (
+                delta > SEMANTIC_UPGRADE_DEMONSTRATED_IMPROVEMENT
+                or math.isclose(
+                    delta,
+                    SEMANTIC_UPGRADE_DEMONSTRATED_IMPROVEMENT,
+                    rel_tol=0.0,
+                    abs_tol=1e-12,
+                )
+            ),
+        }
+    non_regression_passed = all(
+        comparison["regression_exceeds_tolerance"] is False
+        for comparison in metric_comparisons.values()
+    )
+    demonstrated_improvement = any(
+        comparison["demonstrated_improvement"] is True for comparison in metric_comparisons.values()
+    )
+    passed = non_regression_passed and demonstrated_improvement
+    status = (
+        "passed"
+        if passed
+        else (
+            "failed_regression"
+            if not non_regression_passed
+            else "failed_no_demonstrated_improvement"
+        )
+    )
+    return {
+        "status": status,
+        "required_for_activation": True,
+        "passed": passed,
+        "non_regression_tolerance": SEMANTIC_UPGRADE_NON_REGRESSION_TOLERANCE,
+        "demonstrated_improvement_threshold": (SEMANTIC_UPGRADE_DEMONSTRATED_IMPROVEMENT),
+        "demonstrated_improvement_required": True,
+        "demonstrated_improvement": demonstrated_improvement,
+        "metrics": metric_comparisons,
+    }
+
+
+def _not_required_incumbent_comparison(
+    status: str,
+    *,
+    reason_codes: Sequence[str] = (),
+) -> dict[str, Any]:
+    return {
+        "status": status,
+        "required_for_activation": False,
+        "passed": None,
+        "reason_codes": list(reason_codes),
+        "non_regression_tolerance": SEMANTIC_UPGRADE_NON_REGRESSION_TOLERANCE,
+        "demonstrated_improvement_threshold": (SEMANTIC_UPGRADE_DEMONSTRATED_IMPROVEMENT),
+        "demonstrated_improvement_required": False,
+        "demonstrated_improvement": None,
+    }
+
+
+def _failed_incumbent_comparison(
+    *,
+    reason_codes: Sequence[str],
+) -> dict[str, Any]:
+    return {
+        "status": "failed_incomparable_incumbent",
+        "required_for_activation": True,
+        "passed": False,
+        "reason_codes": list(reason_codes),
+        "non_regression_tolerance": SEMANTIC_UPGRADE_NON_REGRESSION_TOLERANCE,
+        "demonstrated_improvement_threshold": (SEMANTIC_UPGRADE_DEMONSTRATED_IMPROVEMENT),
+        "demonstrated_improvement_required": False,
+        "demonstrated_improvement": None,
+    }
+
+
+def _active_incumbent_comparison(
+    engine: Engine,
+    *,
+    candidate_config_hash: str,
+    candidate_corpus_revision: str,
+    candidate_held_out: dict[str, Any],
+) -> dict[str, Any]:
+    with Session(engine) as session:
+        incumbents = list(
+            session.scalars(
+                select(SemanticIndexConfig)
+                .where(
+                    SemanticIndexConfig.active.is_(True),
+                    SemanticIndexConfig.status == "ready",
+                    SemanticIndexConfig.id != candidate_config_hash,
+                )
+                .order_by(SemanticIndexConfig.id)
+                .limit(2)
+            )
+        )
+    if not incumbents:
+        return _not_required_incumbent_comparison("not_required_no_different_active_incumbent")
+    if len(incumbents) != 1:
+        return _failed_incumbent_comparison(
+            reason_codes=("multiple_active_incumbents",),
+        )
+
+    audit = incumbents[0].audit_json
+    accepted = audit.get("accepted_semantic_ir_evaluation") if isinstance(audit, dict) else None
+    if not isinstance(accepted, dict):
+        return _failed_incumbent_comparison(
+            reason_codes=("accepted_evidence_missing",),
+        )
+    incumbent_candidate = accepted.get("candidate")
+    incumbent_candidate = incumbent_candidate if isinstance(incumbent_candidate, dict) else {}
+    incumbent_held_out = accepted.get("held_out_feedback")
+    incumbent_held_out = incumbent_held_out if isinstance(incumbent_held_out, dict) else {}
+    candidate_metrics = candidate_held_out.get("metrics")
+    incumbent_metrics = incumbent_held_out.get("metrics")
+    candidate_query_count = (
+        candidate_metrics.get("query_count") if isinstance(candidate_metrics, dict) else None
+    )
+    incumbent_query_count = (
+        incumbent_metrics.get("query_count") if isinstance(incumbent_metrics, dict) else None
+    )
+    reason_codes: list[str] = []
+    if incumbent_candidate.get("corpus_revision") != candidate_corpus_revision:
+        reason_codes.append("corpus_revision_mismatch")
+    if incumbent_held_out.get("feedback_revision") != candidate_held_out.get("feedback_revision"):
+        reason_codes.append("feedback_revision_mismatch")
+    if (
+        not isinstance(candidate_query_count, int)
+        or isinstance(candidate_query_count, bool)
+        or not isinstance(incumbent_query_count, int)
+        or isinstance(incumbent_query_count, bool)
+        or incumbent_query_count != candidate_query_count
+    ):
+        reason_codes.append("query_count_mismatch")
+    if incumbent_held_out.get("ranking_pipeline") != candidate_held_out.get("ranking_pipeline"):
+        reason_codes.append("ranking_pipeline_mismatch")
+    if incumbent_held_out.get("reranker") != candidate_held_out.get("reranker"):
+        reason_codes.append("reranker_spec_mismatch")
+    if not (
+        incumbent_held_out.get("status") == "passed"
+        and incumbent_held_out.get("passed") is True
+        and incumbent_held_out.get("used_for_activation") is True
+    ):
+        reason_codes.append("incumbent_held_out_not_accepted")
+    if _validated_upgrade_metrics(incumbent_metrics) is None:
+        reason_codes.append("incumbent_metrics_invalid")
+    if _validated_upgrade_metrics(candidate_metrics) is None:
+        reason_codes.append("candidate_metrics_invalid")
+    if reason_codes:
+        return _failed_incumbent_comparison(
+            reason_codes=reason_codes,
+        )
+    return _semantic_upgrade_metric_comparison(candidate_metrics, incumbent_metrics)
+
+
+def _same_config_accepted_evidence_comparison(
+    prior_evaluation_value: object,
+    current_evaluation: dict[str, Any],
+    *,
+    config_hash: str,
+    corpus_revision: str,
+) -> dict[str, Any]:
+    reason_codes: list[str] = []
+    prior_evaluation = prior_evaluation_value if isinstance(prior_evaluation_value, dict) else {}
+    if not prior_evaluation:
+        reason_codes.append("prior_accepted_evaluation_missing")
+    elif prior_evaluation.get("passed") is not True:
+        reason_codes.append("prior_accepted_evaluation_not_passed")
+    if current_evaluation.get("passed") is not True:
+        reason_codes.append("current_evaluation_not_passed")
+
+    prior_candidate = prior_evaluation.get("candidate")
+    prior_candidate = prior_candidate if isinstance(prior_candidate, dict) else {}
+    current_candidate = current_evaluation.get("candidate")
+    current_candidate = current_candidate if isinstance(current_candidate, dict) else {}
+    if (
+        prior_candidate.get("config_hash") != config_hash
+        or current_candidate.get("config_hash") != config_hash
+    ):
+        reason_codes.append("candidate_config_hash_mismatch")
+    if (
+        prior_candidate.get("corpus_revision") != corpus_revision
+        or current_candidate.get("corpus_revision") != corpus_revision
+    ):
+        reason_codes.append("candidate_corpus_revision_mismatch")
+    if not isinstance(prior_evaluation.get("evaluator_version"), str) or prior_evaluation.get(
+        "evaluator_version"
+    ) != current_evaluation.get("evaluator_version"):
+        reason_codes.append("evaluator_revision_mismatch")
+
+    prior_held_out = prior_evaluation.get("held_out_feedback")
+    prior_held_out = prior_held_out if isinstance(prior_held_out, dict) else {}
+    current_held_out = current_evaluation.get("held_out_feedback")
+    current_held_out = current_held_out if isinstance(current_held_out, dict) else {}
+    if not prior_held_out or not current_held_out:
+        reason_codes.append("held_out_evidence_missing")
+    if not isinstance(prior_held_out.get("feedback_revision"), dict) or prior_held_out.get(
+        "feedback_revision"
+    ) != current_held_out.get("feedback_revision"):
+        reason_codes.append("held_out_feedback_revision_mismatch")
+    if not isinstance(prior_held_out.get("ranking_pipeline"), str) or prior_held_out.get(
+        "ranking_pipeline"
+    ) != current_held_out.get("ranking_pipeline"):
+        reason_codes.append("held_out_ranking_pipeline_mismatch")
+    if not isinstance(prior_held_out.get("reranker"), dict) or prior_held_out.get(
+        "reranker"
+    ) != current_held_out.get("reranker"):
+        reason_codes.append("held_out_reranker_mismatch")
+    held_out_policy_fields = (
+        "benchmark_kind",
+        "minimum_query_count_for_activation",
+        "query_cap",
+        "judgment_cap_per_query",
+        "thresholds",
+    )
+    if any(
+        prior_held_out.get(name) != current_held_out.get(name) for name in held_out_policy_fields
+    ):
+        reason_codes.append("held_out_policy_mismatch")
+    if current_held_out.get("status") == "stale_feedback":
+        reason_codes.append("held_out_feedback_stale")
+
+    prior_development = prior_evaluation.get("direct_conflict_development_calibration")
+    prior_development = prior_development if isinstance(prior_development, dict) else {}
+    current_development = current_evaluation.get("direct_conflict_development_calibration")
+    current_development = current_development if isinstance(current_development, dict) else {}
+    if not prior_development or not current_development:
+        reason_codes.append("direct_conflict_evidence_missing")
+    if prior_development.get("feedback_revision") != current_development.get("feedback_revision"):
+        reason_codes.append("direct_conflict_feedback_revision_mismatch")
+    if not isinstance(prior_development.get("ranking_pipeline"), str) or prior_development.get(
+        "ranking_pipeline"
+    ) != current_development.get("ranking_pipeline"):
+        reason_codes.append("direct_conflict_ranking_pipeline_mismatch")
+    if prior_development.get("model_metadata") != current_development.get("model_metadata"):
+        reason_codes.append("direct_conflict_ranker_mismatch")
+    development_policy_fields = (
+        "benchmark_kind",
+        "evaluation_intent",
+        "evidence_kind",
+        "method",
+        "minimums",
+        "thresholds",
+    )
+    if any(
+        prior_development.get(name) != current_development.get(name)
+        for name in development_policy_fields
+    ):
+        reason_codes.append("direct_conflict_policy_mismatch")
+    if current_development.get("status") == "stale_feedback":
+        reason_codes.append("direct_conflict_feedback_stale")
+
+    # Retrieval metrics are deliberately re-gated rather than required to be byte-identical.
+    # Exact config/corpus and evaluator inputs must match, while harmless floating-point drift is
+    # allowed only when the current run still passes the same acceptance policy.
+    prior_was_production_accepted = prior_evaluation.get("production_acceptance_passed") is True
+    if prior_was_production_accepted and not (
+        current_evaluation.get("production_acceptance_passed") is True
+        and current_held_out.get("feedback_revision_stable_during_evaluation") is True
+        and current_development.get("feedback_revision_stable_during_evaluation") is True
+    ):
+        reason_codes.append("production_acceptance_not_revalidated")
+
+    reason_codes = list(dict.fromkeys(reason_codes))
+    passed = not reason_codes
+    return {
+        "status": "passed_preserved_prior_acceptance" if passed else "failed_stale_acceptance",
+        "required_for_activation": True,
+        "passed": passed,
+        "reason_codes": reason_codes,
+        "prior_production_acceptance": prior_was_production_accepted,
+        "preserves_prior_accepted_evaluation": passed,
+    }
+
+
 def _held_out_feedback_evaluation(
     layout: ArchiveLayout,
     engine: Engine,
@@ -1704,7 +2580,17 @@ def _held_out_feedback_evaluation(
     prepared = _held_out_feedback_groups(engine, config_hash=config_hash)
     groups = prepared.pop("groups")
     rankings: list[list[str]] = []
+    cosine_rankings: list[list[str]] = []
     relevance_sets: list[set[str]] = []
+    rankings_by_mode: dict[str, list[list[str]]] = {"semantic": [], "hybrid": []}
+    cosine_rankings_by_mode: dict[str, list[list[str]]] = {
+        "semantic": [],
+        "hybrid": [],
+    }
+    relevance_sets_by_mode: dict[str, list[set[str]]] = {
+        "semantic": [],
+        "hybrid": [],
+    }
     query_group_counts_by_mode = {"semantic": 0, "hybrid": 0}
     reranker = _held_out_reranker(layout, reranker_factory) if groups else None
     for group in groups:
@@ -1720,8 +2606,9 @@ def _held_out_feedback_evaluation(
             filters=filters,
             config_hash=config_hash,
         )
-        ranking = semantic_ranking[:SEMANTIC_IR_K]
-        if group["source_search_mode"] == "hybrid":
+        ranking = list(semantic_ranking.reranked_ids[:SEMANTIC_IR_K])
+        source_search_mode = str(group["source_search_mode"])
+        if source_search_mode == "hybrid":
             lexical_items = lexical_search(
                 engine,
                 str(group["query_text"]),
@@ -1738,14 +2625,14 @@ def _held_out_feedback_evaluation(
                     window.id
                     for window in session.scalars(
                         _valid_window_statement(
-                            list(dict.fromkeys([*lexical_ranking, *semantic_ranking])),
+                            list(dict.fromkeys([*lexical_ranking, *semantic_ranking.reranked_ids])),
                             filters,
                             config_hash=config_hash,
                         )
                     )
                 }
             fused: dict[str, float] = {}
-            for source_ranking in (lexical_ranking, semantic_ranking):
+            for source_ranking in (lexical_ranking, semantic_ranking.reranked_ids):
                 for rank, window_id in enumerate(source_ranking, start=1):
                     if window_id in candidate_ids:
                         fused[window_id] = fused.get(window_id, 0.0) + 1.0 / (60 + rank)
@@ -1758,9 +2645,33 @@ def _held_out_feedback_evaluation(
             ]
         relevant = cast(set[str], group["relevant_window_ids"])
         rankings.append(ranking)
+        cosine_ranking = list(semantic_ranking.cosine_ids)
+        cosine_rankings.append(cosine_ranking)
         relevance_sets.append(relevant)
-        query_group_counts_by_mode[str(group["source_search_mode"])] += 1
+        rankings_by_mode[source_search_mode].append(ranking)
+        cosine_rankings_by_mode[source_search_mode].append(cosine_ranking)
+        relevance_sets_by_mode[source_search_mode].append(relevant)
+        query_group_counts_by_mode[source_search_mode] += 1
     aggregate = retrieval_metrics(rankings, relevance_sets, k=SEMANTIC_IR_K)
+    metrics_by_mode = {
+        mode: retrieval_metrics(
+            rankings_by_mode[mode],
+            relevance_sets_by_mode[mode],
+            k=SEMANTIC_IR_K,
+        )
+        for mode in ("semantic", "hybrid")
+    }
+    cosine_candidate_recall = _candidate_recall_summary(
+        cosine_rankings,
+        relevance_sets,
+    )
+    cosine_candidate_recall_by_mode = {
+        mode: _candidate_recall_summary(
+            cosine_rankings_by_mode[mode],
+            relevance_sets_by_mode[mode],
+        )
+        for mode in ("semantic", "hybrid")
+    }
     argument_direct_conflict = _argument_direct_conflict_evaluation(
         groups,
         rankings,
@@ -1769,6 +2680,9 @@ def _held_out_feedback_evaluation(
     )
     query_count = len(rankings)
     feedback_revision_stable = feedback_revision == held_out_feedback_revision(engine)
+    evidence_truncated = bool(
+        prepared["query_selection_truncated"] or prepared["judgments_truncated"]
+    )
     if not feedback_revision_stable:
         argument_direct_conflict = {
             **argument_direct_conflict,
@@ -1776,16 +2690,23 @@ def _held_out_feedback_evaluation(
             "passed": False,
             "selection_complete": False,
         }
-    used_for_activation = query_count >= HELD_OUT_MIN_QUERY_COUNT
+    # Truncation must remain activation-relevant even when the cap itself reduces the selected
+    # query count below the ordinary minimum. Otherwise a capped evidence set could silently
+    # downgrade itself to an optional benchmark and let the candidate through.
+    used_for_activation = query_count >= HELD_OUT_MIN_QUERY_COUNT or evidence_truncated
     passed: bool | None = (
-        _metric_thresholds_passed(aggregate, HELD_OUT_THRESHOLDS) and feedback_revision_stable
+        _metric_thresholds_passed(aggregate, HELD_OUT_THRESHOLDS)
+        and feedback_revision_stable
+        and not evidence_truncated
         if used_for_activation
         else None
     )
-    if not query_count:
-        evaluation_status = "not_available"
-    elif not feedback_revision_stable:
+    if not feedback_revision_stable:
         evaluation_status = "stale_feedback"
+    elif evidence_truncated:
+        evaluation_status = "truncated_evidence"
+    elif not query_count:
+        evaluation_status = "not_available"
     elif not used_for_activation:
         evaluation_status = "insufficient_sample"
     else:
@@ -1813,6 +2734,10 @@ def _held_out_feedback_evaluation(
         "judgment_cap_per_query": FEEDBACK_JUDGMENT_CAP_PER_QUERY,
         "thresholds": {**HELD_OUT_THRESHOLDS, "k": SEMANTIC_IR_K},
         "metrics": aggregate,
+        "metrics_by_mode": metrics_by_mode,
+        "cosine_candidate_recall": cosine_candidate_recall,
+        "cosine_candidate_recall_by_mode": cosine_candidate_recall_by_mode,
+        "evidence_truncated": evidence_truncated,
         "argument_direct_conflict": argument_direct_conflict,
         **prepared,
     }
@@ -1840,6 +2765,12 @@ def _semantic_ir_evaluation(
         config_hash=config_hash,
         reranker_factory=reranker_factory,
     )
+    active_incumbent_comparison = _active_incumbent_comparison(
+        engine,
+        candidate_config_hash=config_hash,
+        candidate_corpus_revision=corpus_revision,
+        candidate_held_out=held_out,
+    )
     direct_conflict_development = _direct_conflict_development_evaluation(
         layout,
         engine,
@@ -1848,14 +2779,23 @@ def _semantic_ir_evaluation(
         config_hash=config_hash,
         reranker_factory=reranker_factory,
     )
-    passed = bool(automatic["passed"]) and (
-        not held_out["used_for_activation"] or bool(held_out["passed"])
+    incumbent_comparison_satisfied = bool(
+        active_incumbent_comparison["required_for_activation"] is False
+        or active_incumbent_comparison["passed"] is True
+    )
+    passed = (
+        bool(automatic["passed"])
+        and (not held_out["used_for_activation"] or bool(held_out["passed"]))
+        and incumbent_comparison_satisfied
+        and direct_conflict_development["passed"] is True
     )
     production_acceptance_passed = bool(
         passed
         and held_out["used_for_activation"] is True
         and held_out["passed"] is True
         and held_out["feedback_revision_stable_during_evaluation"] is True
+        and held_out["evidence_truncated"] is False
+        and incumbent_comparison_satisfied
         and direct_conflict_development["passed"] is True
     )
     return {
@@ -1879,6 +2819,7 @@ def _semantic_ir_evaluation(
         },
         "automatic_known_item": automatic,
         "held_out_feedback": held_out,
+        "active_incumbent_comparison": active_incumbent_comparison,
         "direct_conflict_development_calibration": direct_conflict_development,
     }
 
@@ -2898,35 +3839,39 @@ def _prepare_job(
         return job_id, False
 
 
-def search_window_corpus_revision(engine: Engine) -> str:
+def _search_window_corpus_revision_in_session(session: Session) -> str:
     digest = hashlib.sha256()
-    with Session(engine) as session:
-        rows = session.execute(
-            select(
-                SearchWindow.id,
-                SearchWindow.entity_type,
-                SearchWindow.conversation_id,
-                SearchWindow.segment_id,
-                SearchWindow.activity_id,
-                SearchWindow.audio_segment_id,
-                SearchWindow.attachment_extraction_id,
-                SearchWindow.attachment_occurrence_id,
-                SearchWindow.first_message_id,
-                SearchWindow.last_message_id,
-                SearchWindow.first_timestamp_ms,
-                SearchWindow.last_timestamp_ms,
-                SearchWindow.source_category,
-                SearchWindow.participants_search,
-                SearchWindow.text_display,
-                SearchWindow.text_search,
-            ).order_by(SearchWindow.id)
+    rows = session.execute(
+        select(
+            SearchWindow.id,
+            SearchWindow.entity_type,
+            SearchWindow.conversation_id,
+            SearchWindow.segment_id,
+            SearchWindow.activity_id,
+            SearchWindow.audio_segment_id,
+            SearchWindow.attachment_extraction_id,
+            SearchWindow.attachment_occurrence_id,
+            SearchWindow.first_message_id,
+            SearchWindow.last_message_id,
+            SearchWindow.first_timestamp_ms,
+            SearchWindow.last_timestamp_ms,
+            SearchWindow.source_category,
+            SearchWindow.participants_search,
+            SearchWindow.text_display,
+            SearchWindow.text_search,
+        ).order_by(SearchWindow.id)
+    )
+    for row in rows:
+        digest.update(
+            json.dumps(tuple(row), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         )
-        for row in rows:
-            digest.update(
-                json.dumps(tuple(row), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-            )
-            digest.update(b"\n")
+        digest.update(b"\n")
     return digest.hexdigest()
+
+
+def search_window_corpus_revision(engine: Engine) -> str:
+    with Session(engine) as session:
+        return _search_window_corpus_revision_in_session(session)
 
 
 def search_window_language_audit(engine: Engine, *, sample_limit: int = 2_000) -> dict[str, Any]:
@@ -2953,9 +3898,7 @@ def search_window_language_audit(engine: Engine, *, sample_limit: int = 2_000) -
     confident_count = sum(counts.values())
     non_english_count = confident_count - counts.get(Language.ENGLISH.name, 0)
     non_english_ratio = non_english_count / confident_count if confident_count else 0.0
-    recommended_model = (
-        "multilingual-e5-small" if non_english_ratio >= 0.05 else "bge-small-en-v1.5"
-    )
+    recommended_model = AUTO_EMBEDDING_MODEL_ALIAS
     return {
         "method": "lingua-2.2-low-accuracy-stable-window-sample",
         "sample_limit": sample_limit,
@@ -2964,8 +3907,563 @@ def search_window_language_audit(engine: Engine, *, sample_limit: int = 2_000) -
         "language_counts": dict(sorted(counts.items())),
         "non_english_ratio": non_english_ratio,
         "threshold": 0.05,
+        "threshold_used_for_selection": False,
+        "selection_policy": SEMANTIC_MODEL_SELECTION_POLICY,
         "recommended_model": recommended_model,
     }
+
+
+_MANUAL_ACTIVATION_VERSION = "semantic-manual-activation-v1"
+_MANUAL_ACTIVATION_REASON = (
+    "User-directed CLI activation after acknowledging the rejected candidate's failed "
+    "automatic quality gate."
+)
+
+
+def _manual_activation_registered_spec(
+    config: SemanticIndexConfig,
+) -> EmbeddingModelSpec:
+    audit = config.audit_json if isinstance(config.audit_json, dict) else {}
+    selected_model = audit.get("selected_model")
+    if not isinstance(selected_model, dict):
+        raise SemanticIndexManualActivationError(
+            "Rejected candidate does not record its selected model specification"
+        )
+    alias = selected_model.get("alias")
+    spec = MODEL_SPECS.get(alias) if isinstance(alias, str) else None
+    if spec is None or selected_model != asdict(spec):
+        raise SemanticIndexManualActivationError(
+            "Rejected candidate model specification is not a current registered model"
+        )
+    expected_config = {
+        "backend": embedding_backend(spec)[0],
+        "backend_version": embedding_backend(spec)[1],
+        "model_name": spec.model_name,
+        "model_revision": spec.model_revision,
+        "dimensions": spec.dimensions,
+        "distance_metric": "cosine",
+        "document_prefix": spec.document_prefix,
+        "query_prefix": spec.query_prefix,
+        "vector_table": f"text_windows_{config.id[:16]}",
+        "window_version": WINDOW_VERSION,
+    }
+    mismatched = [
+        key for key, expected in expected_config.items() if getattr(config, key) != expected
+    ]
+    if mismatched:
+        raise SemanticIndexManualActivationError(
+            "Rejected candidate configuration no longer matches the implementation: "
+            + ", ".join(sorted(mismatched))
+        )
+    return spec
+
+
+def _manual_activation_catalog_preflight(
+    session: Session,
+    *,
+    config_hash: str,
+) -> tuple[
+    SemanticIndexConfig,
+    SemanticIndexConfig,
+    EmbeddingModelSpec,
+    dict[str, Any],
+    str,
+    int,
+]:
+    active_jobs = list(
+        session.scalars(
+            select(Job)
+            .where(Job.status.in_(("queued", "running")))
+            .order_by(Job.created_at, Job.id)
+        )
+    )
+    if active_jobs:
+        raise SemanticIndexManualActivationError(
+            "Manual activation requires every queued or running job to finish first"
+        )
+    candidate = session.get(SemanticIndexConfig, config_hash)
+    if candidate is None:
+        raise SemanticIndexManualActivationError(
+            f"Rejected semantic candidate {config_hash} was not found"
+        )
+    if candidate.active or candidate.status != "rejected":
+        raise SemanticIndexManualActivationError(
+            "Manual activation requires an inactive candidate with status 'rejected'"
+        )
+    audit = candidate.audit_json if isinstance(candidate.audit_json, dict) else {}
+    evaluation = audit.get("semantic_ir_evaluation")
+    if not isinstance(evaluation, dict) or not (
+        evaluation.get("passed") is False
+        and evaluation.get("production_acceptance_passed") is False
+        and evaluation.get("evaluator_version")
+        in {
+            PREVIOUS_SEMANTIC_IR_EVALUATOR_VERSION,
+            SEMANTIC_IR_EVALUATOR_VERSION,
+        }
+    ):
+        raise SemanticIndexManualActivationError(
+            "Rejected candidate does not retain an explicit failed quality evaluation"
+        )
+    evaluation_candidate = evaluation.get("candidate")
+    corpus_revision = audit.get("corpus_revision")
+    if not isinstance(evaluation_candidate, dict) or not isinstance(corpus_revision, str):
+        raise SemanticIndexManualActivationError(
+            "Rejected candidate does not retain complete corpus evaluation provenance"
+        )
+    expected_evaluation_candidate = {
+        "config_hash": config_hash,
+        "vector_table": candidate.vector_table,
+        "corpus_revision": corpus_revision,
+        "window_count": candidate.window_count,
+        "distance_metric": candidate.distance_metric,
+    }
+    if any(
+        evaluation_candidate.get(key) != value
+        for key, value in expected_evaluation_candidate.items()
+    ):
+        raise SemanticIndexManualActivationError(
+            "Rejected candidate evaluation does not match its persisted configuration"
+        )
+    active_configs = list(
+        session.scalars(
+            select(SemanticIndexConfig).where(
+                SemanticIndexConfig.active.is_(True),
+                SemanticIndexConfig.status == "ready",
+            )
+        )
+    )
+    if len(active_configs) != 1:
+        raise SemanticIndexManualActivationError(
+            "Manual activation requires exactly one ready active incumbent"
+        )
+    incumbent = active_configs[0]
+    incumbent_audit = incumbent.audit_json if isinstance(incumbent.audit_json, dict) else {}
+    if incumbent_audit.get("corpus_revision") != corpus_revision:
+        raise SemanticIndexManualActivationError(
+            "Rejected candidate and active incumbent do not cover the same corpus revision"
+        )
+    catalog_window_count = int(session.scalar(select(func.count(SearchWindow.id))) or 0)
+    membership_count = int(
+        session.scalar(
+            select(func.count(SemanticWindowEmbedding.window_id)).where(
+                SemanticWindowEmbedding.config_id == config_hash
+            )
+        )
+        or 0
+    )
+    incumbent_binding_count = int(
+        session.scalar(
+            select(func.count(SearchWindow.id)).where(
+                SearchWindow.embedding_config_hash == incumbent.id
+            )
+        )
+        or 0
+    )
+    if (
+        candidate.window_count != catalog_window_count
+        or membership_count != catalog_window_count
+        or incumbent_binding_count != catalog_window_count
+    ):
+        raise SemanticIndexManualActivationError(
+            "Rejected candidate, membership, catalog, or incumbent binding counts diverge"
+        )
+    if candidate.completed_at is None or candidate.job_id is None:
+        raise SemanticIndexManualActivationError(
+            "Rejected candidate does not record a completed build"
+        )
+    build_job = session.get(Job, candidate.job_id)
+    if (
+        build_job is None
+        or build_job.kind != "semantic_index"
+        or build_job.status != "failed"
+        or build_job.checkpoint_json.get("config_hash") != config_hash
+        or build_job.counters_json.get("config_hash") != config_hash
+        or build_job.counters_json.get("acceptance_passed") is not False
+        or build_job.progress_current != catalog_window_count
+        or build_job.progress_total != catalog_window_count
+    ):
+        raise SemanticIndexManualActivationError(
+            "Rejected candidate's failed build job is incomplete or inconsistent"
+        )
+    spec = _manual_activation_registered_spec(candidate)
+    implementation = embedding_implementation_identity(spec)
+    if audit.get("embedding_implementation") != implementation:
+        raise SemanticIndexManualActivationError(
+            "Rejected candidate embedding implementation is not current"
+        )
+    artifact_fingerprint = audit.get("artifact_fingerprint")
+    if not isinstance(artifact_fingerprint, str) or not artifact_fingerprint:
+        raise SemanticIndexManualActivationError(
+            "Rejected candidate model artifact fingerprint is missing"
+        )
+    expected_hash = embedding_config_hash(
+        spec,
+        corpus_revision=corpus_revision,
+        artifact_fingerprint=artifact_fingerprint,
+    )
+    if expected_hash != config_hash:
+        raise SemanticIndexManualActivationError(
+            "Rejected candidate config ID does not match its artifact and corpus identity"
+        )
+    current_corpus_revision = _search_window_corpus_revision_in_session(session)
+    if current_corpus_revision != corpus_revision:
+        raise SemanticIndexManualActivationError(
+            "Rejected candidate no longer matches the searchable corpus"
+        )
+    return (
+        candidate,
+        incumbent,
+        spec,
+        cast(dict[str, Any], evaluation),
+        artifact_fingerprint,
+        catalog_window_count,
+    )
+
+
+def _manual_activation_lance_spot_check(
+    table: Any,
+    engine: Engine,
+    *,
+    config_hash: str,
+    dimensions: int,
+    row_count: int,
+    sample_limit: int = 64,
+) -> dict[str, Any]:
+    """Deterministically sample vector and retrieval metadata before manual publication."""
+
+    if row_count < 1:
+        raise SemanticIndexManualActivationError(
+            "Rejected candidate Lance table does not contain any rows"
+        )
+    sample_count = min(row_count, sample_limit)
+    offsets = (
+        [0]
+        if sample_count == 1
+        else [round(index * (row_count - 1) / (sample_count - 1)) for index in range(sample_count)]
+    )
+    columns = [
+        "id",
+        "vector",
+        "entity_type",
+        "conversation_id",
+        "segment_id",
+        "activity_id",
+        "source_category",
+        "participants_search",
+        "first_timestamp_ms",
+        "last_timestamp_ms",
+        "jump_id",
+        "text",
+        "build_generation",
+    ]
+    rows = table.take_offsets(offsets).select(columns).to_list()
+    if len(rows) != sample_count:
+        raise SemanticIndexManualActivationError(
+            "Rejected candidate Lance spot check returned an incomplete sample"
+        )
+    identifiers = [str(row.get("id") or "") for row in rows]
+    if any(not identifier for identifier in identifiers) or len(set(identifiers)) != sample_count:
+        raise SemanticIndexManualActivationError(
+            "Rejected candidate Lance spot check found missing or duplicate IDs"
+        )
+    try:
+        _validate_embedding_vectors(
+            [cast(Sequence[float], row.get("vector")) for row in rows],
+            expected_count=sample_count,
+            dimensions=dimensions,
+        )
+    except (RuntimeError, TypeError, ValueError) as exc:
+        raise SemanticIndexManualActivationError(
+            "Rejected candidate Lance spot check found an invalid vector"
+        ) from exc
+
+    with Session(engine) as session:
+        windows = {
+            window.id: window
+            for window in session.scalars(
+                select(SearchWindow).where(SearchWindow.id.in_(identifiers))
+            )
+        }
+        memberships = set(
+            session.scalars(
+                select(SemanticWindowEmbedding.window_id).where(
+                    SemanticWindowEmbedding.config_id == config_hash,
+                    SemanticWindowEmbedding.window_id.in_(identifiers),
+                )
+            )
+        )
+    if set(identifiers) != set(windows) or set(identifiers) != memberships:
+        raise SemanticIndexManualActivationError(
+            "Rejected candidate Lance spot check diverges from catalog membership"
+        )
+    metadata_fields = [column for column in columns if column not in {"id", "vector"}]
+    for row, identifier in zip(rows, identifiers, strict=True):
+        expected = _vector_row(windows[identifier], [])
+        if any(row.get(field) != expected[field] for field in metadata_fields):
+            raise SemanticIndexManualActivationError(
+                "Rejected candidate Lance spot check found retrieval metadata drift"
+            )
+    return {
+        "strategy": "evenly_spaced_physical_offsets_v1",
+        "sampled_row_count": sample_count,
+        "sample_limit": sample_limit,
+        "offsets_sha256": hashlib.sha256(
+            json.dumps(offsets, separators=(",", ":")).encode("utf-8")
+        ).hexdigest(),
+        "ids_memberships_vectors_metadata_matched": True,
+    }
+
+
+def activate_rejected_semantic_candidate(
+    layout: ArchiveLayout,
+    engine: Engine,
+    *,
+    config_hash: str,
+    acknowledge_failed_quality_gate: bool,
+) -> SemanticManualActivationSummary:
+    """Explicitly activate one complete rejected candidate without rewriting its evaluation."""
+
+    if not re.fullmatch(r"[0-9a-f]{64}", config_hash):
+        raise SemanticIndexManualActivationError(
+            "Manual activation requires the exact 64-character lowercase config ID"
+        )
+    if acknowledge_failed_quality_gate is not True:
+        raise SemanticIndexManualActivationError(
+            "Pass --acknowledge-failed-quality-gate to confirm this candidate failed "
+            "automatic retrieval acceptance"
+        )
+    with deletion_lock(layout), semantic_index_lock(layout):
+        assert_derived_publication_allowed(
+            engine,
+            publisher="Manual semantic candidate activation",
+        )
+        with Session(engine) as session:
+            (
+                candidate,
+                incumbent,
+                spec,
+                failed_evaluation,
+                artifact_fingerprint,
+                catalog_window_count,
+            ) = _manual_activation_catalog_preflight(
+                session,
+                config_hash=config_hash,
+            )
+            candidate_vector_table = candidate.vector_table
+            candidate_dimensions = candidate.dimensions
+            previous_active_config_id = incumbent.id
+            original_failed_evaluation = json.loads(json.dumps(failed_evaluation))
+
+        active_embedder = default_text_embedder(layout, spec, local_files_only=True)
+        if embedding_artifact_fingerprint(active_embedder) != artifact_fingerprint:
+            raise SemanticIndexManualActivationError(
+                "Installed model artifact no longer matches the rejected candidate"
+            )
+
+        database = lancedb.connect(str(layout.vectors))
+        if candidate_vector_table not in lance_table_names(database):
+            raise SemanticIndexManualActivationError("Rejected candidate Lance table is missing")
+        table = database.open_table(candidate_vector_table)
+        lance_row_count = int(table.count_rows())
+        vector_field = table.schema.field("vector")
+        if (
+            lance_row_count != catalog_window_count
+            or not pa.types.is_fixed_size_list(vector_field.type)
+            or vector_field.type.list_size != candidate_dimensions
+        ):
+            raise SemanticIndexManualActivationError(
+                "Rejected candidate Lance row count or vector dimensions diverge"
+            )
+        lance_spot_check = _manual_activation_lance_spot_check(
+            table,
+            engine,
+            config_hash=config_hash,
+            dimensions=candidate_dimensions,
+            row_count=lance_row_count,
+        )
+
+        activated_at = datetime.now(UTC)
+        activation_job_id = str(uuid.uuid4())
+        with _immediate_session(engine) as session:
+            (
+                locked_candidate,
+                locked_incumbent,
+                locked_spec,
+                locked_failed_evaluation,
+                locked_artifact_fingerprint,
+                locked_catalog_window_count,
+            ) = _manual_activation_catalog_preflight(
+                session,
+                config_hash=config_hash,
+            )
+            if (
+                locked_incumbent.id != previous_active_config_id
+                or locked_spec != spec
+                or locked_artifact_fingerprint != artifact_fingerprint
+                or locked_catalog_window_count != catalog_window_count
+                or locked_failed_evaluation != original_failed_evaluation
+            ):
+                raise SemanticIndexManualActivationError(
+                    "Rejected candidate changed during manual activation preflight"
+                )
+            locked_audit = (
+                locked_candidate.audit_json if isinstance(locked_candidate.audit_json, dict) else {}
+            )
+            language_audit = locked_audit.get("language_audit")
+            current_language_audit = (
+                {
+                    **language_audit,
+                    "recommended_model": AUTO_EMBEDDING_MODEL_ALIAS,
+                    "selection_policy": SEMANTIC_MODEL_SELECTION_POLICY,
+                }
+                if isinstance(language_audit, dict)
+                else None
+            )
+            prior_selection_metadata = {
+                key: locked_audit.get(key)
+                for key in (
+                    "recommended_model",
+                    "model_selection",
+                    "selection_note",
+                    "selection_policy",
+                )
+                if key in locked_audit
+            }
+            if isinstance(language_audit, dict):
+                prior_selection_metadata["language_audit"] = {
+                    "recommended_model": language_audit.get("recommended_model"),
+                    "selection_policy": language_audit.get("selection_policy"),
+                }
+            manual_override = {
+                "version": _MANUAL_ACTIVATION_VERSION,
+                "activated_at": activated_at.isoformat(),
+                "candidate_config_id": config_hash,
+                "previous_active_config_id": previous_active_config_id,
+                "acknowledged_failed_quality_gate": True,
+                "reason": _MANUAL_ACTIVATION_REASON,
+                "source": "cli_only",
+                "failed_evaluation_preserved": True,
+                "source_build_job_id": locked_candidate.job_id,
+                "activation_job_id": activation_job_id,
+                "prior_selection_metadata": prior_selection_metadata,
+                "validation": {
+                    "catalog_window_count": catalog_window_count,
+                    "membership_count": catalog_window_count,
+                    "lance_row_count": lance_row_count,
+                    "vector_dimensions": candidate_dimensions,
+                    "corpus_revision_matched_incumbent": True,
+                    "artifact_fingerprint_matched": True,
+                    "embedding_implementation_matched": True,
+                    "lance_spot_check": lance_spot_check,
+                    "failed_quality_evaluator_version": locked_failed_evaluation[
+                        "evaluator_version"
+                    ],
+                },
+                "literal_direct_conflict_runtime": (
+                    "normal_cross_encoder_when_specialized_calibration_is_not_accepted"
+                ),
+            }
+            refreshed_audit = {
+                **locked_audit,
+                "recommended_model": AUTO_EMBEDDING_MODEL_ALIAS,
+                "model_selection": "explicit_manual_override",
+                "selection_policy": SEMANTIC_MODEL_SELECTION_POLICY,
+                "selection_note": (
+                    f"The rejected semantic candidate {locked_spec.model_name} was explicitly "
+                    "activated by CLI after its failed compatibility evaluation was acknowledged."
+                ),
+                "manual_activation_override": manual_override,
+            }
+            if current_language_audit is not None:
+                refreshed_audit["language_audit"] = current_language_audit
+            if refreshed_audit.get("semantic_ir_evaluation") != original_failed_evaluation:
+                raise SemanticIndexManualActivationError(
+                    "Manual activation attempted to alter the failed quality evaluation"
+                )
+
+            session.execute(update(SemanticIndexConfig).values(active=False))
+            session.execute(
+                update(SearchWindow).values(
+                    embedding_config_hash=config_hash,
+                    embedding_updated_at=activated_at,
+                )
+            )
+            locked_candidate.active = True
+            locked_candidate.status = "ready"
+            locked_candidate.job_id = activation_job_id
+            locked_candidate.audit_json = refreshed_audit
+            session.add(
+                Job(
+                    id=activation_job_id,
+                    kind="semantic_index",
+                    status="completed",
+                    stage="Semantic index manually activated",
+                    progress_current=catalog_window_count,
+                    progress_total=catalog_window_count,
+                    checkpoint_json={
+                        "config_hash": config_hash,
+                        "previous_active_config_id": previous_active_config_id,
+                        "source_build_job_id": manual_override["source_build_job_id"],
+                    },
+                    counters_json={
+                        "config_hash": config_hash,
+                        "model_name": locked_candidate.model_name,
+                        "window_count": catalog_window_count,
+                        "manual_activation_override": True,
+                        "acceptance_passed": False,
+                        "production_acceptance_passed": False,
+                    },
+                    started_at=activated_at,
+                    finished_at=activated_at,
+                )
+            )
+
+        try:
+            from meta_archive.services.conflict_aggregates import (
+                invalidate_conflict_aggregates,
+            )
+
+            invalidated_conflict_runs = invalidate_conflict_aggregates(
+                engine,
+                reason=(
+                    "Semantic index manually changed after a failed quality gate; "
+                    "rebuild conflict aggregates"
+                ),
+            )
+            invalidation_result: dict[str, Any] = {
+                "status": "completed",
+                "invalidated_run_count": invalidated_conflict_runs,
+                "completed_at": datetime.now(UTC).isoformat(),
+            }
+        except Exception as exc:
+            invalidated_conflict_runs = 0
+            invalidation_result = {
+                "status": "failed",
+                "error_type": type(exc).__name__,
+                "message": str(exc),
+                "failed_at": datetime.now(UTC).isoformat(),
+            }
+        with Session(engine) as session, session.begin():
+            activated = session.get(SemanticIndexConfig, config_hash)
+            if activated is not None:
+                override = activated.audit_json.get("manual_activation_override")
+                activated.audit_json = {
+                    **activated.audit_json,
+                    "manual_activation_override": {
+                        **(override if isinstance(override, dict) else {}),
+                        "conflict_aggregate_invalidation": invalidation_result,
+                    },
+                    "conflict_aggregate_invalidation": invalidation_result,
+                }
+        return SemanticManualActivationSummary(
+            activation_job_id=activation_job_id,
+            config_hash=config_hash,
+            previous_active_config_id=previous_active_config_id,
+            vector_table=candidate_vector_table,
+            window_count=catalog_window_count,
+            model_name=spec.model_name,
+            invalidated_conflict_run_count=invalidated_conflict_runs,
+        )
 
 
 def build_semantic_index(
@@ -3062,12 +4560,10 @@ def _build_semantic_index_locked(
     else:
         configured_model = model_alias or settings.embedding_model
         selected_alias = (
-            str(language_audit["recommended_model"])
-            if configured_model == "auto"
-            else configured_model
+            AUTO_EMBEDDING_MODEL_ALIAS if configured_model == "auto" else configured_model
         )
         spec = embedding_model_spec(selected_alias)
-        model_selection = "language_audit" if configured_model == "auto" else "explicit_config"
+        model_selection = "automatic_default" if configured_model == "auto" else "explicit_config"
     active_embedder = (
         embedder
         or (embedder_factory(spec) if embedder_factory is not None else None)
@@ -3090,6 +4586,7 @@ def _build_semantic_index_locked(
     candidate_was_active_ready = False
     prior_candidate_audit: dict[str, Any] = {}
     try:
+        actual_batch_size = _validated_embedding_batch_size(spec, batch_size)
         audit = {
             "model_candidates": [asdict(candidate) for candidate in MODEL_SPECS.values()],
             "selected_model": asdict(spec),
@@ -3097,12 +4594,13 @@ def _build_semantic_index_locked(
             "language_audit": language_audit,
             "recommended_model": language_audit["recommended_model"],
             "model_selection": model_selection,
+            "selection_policy": SEMANTIC_MODEL_SELECTION_POLICY,
             "artifact_fingerprint": artifact_fingerprint,
             "embedding_implementation": embedding_implementation_identity(spec),
             "corpus_revision": corpus_revision,
             "selection_note": (
-                "Automatic selection follows the recorded 5% non-English threshold unless an "
-                "explicit model or injected embedder is supplied."
+                "Automatic selection uses the pinned English BGE-base model. The language audit "
+                "is informational; other registered models remain explicit candidate choices."
             ),
             "window_policy": {
                 "minimum_turns": MIN_TURNS,
@@ -3172,9 +4670,6 @@ def _build_semantic_index_locked(
             config_hash=config_hash,
         )
 
-        actual_batch_size = batch_size or settings.embedding_batch_size
-        if actual_batch_size < 1:
-            raise ValueError("Semantic embedding batch size must be positive")
         with Session(engine) as session:
             total = session.scalar(select(func.count(SearchWindow.id))) or 0
         if candidate_was_active_ready and preexisting_embedded_count != total:
@@ -3317,6 +4812,30 @@ def _build_semantic_index_locked(
             approximate_index_requested=approximate_index_requested,
             reranker_factory=reranker_factory,
         )
+        preserved_accepted_evaluation: dict[str, Any] | None = None
+        if candidate_was_active_ready:
+            prior_accepted_evaluation = prior_candidate_audit.get("accepted_semantic_ir_evaluation")
+            accepted_evidence_comparison = _same_config_accepted_evidence_comparison(
+                prior_accepted_evaluation,
+                evaluation,
+                config_hash=config_hash,
+                corpus_revision=corpus_revision,
+            )
+            evaluation = {
+                **evaluation,
+                "same_config_accepted_evidence": accepted_evidence_comparison,
+            }
+            if accepted_evidence_comparison["passed"] is True:
+                preserved_accepted_evaluation = cast(
+                    dict[str, Any],
+                    prior_accepted_evaluation,
+                )
+            else:
+                evaluation["passed"] = False
+                evaluation["production_acceptance_passed"] = False
+                evaluation["decision"] = (
+                    "rejected; the prior accepted evaluation and active index remain unchanged"
+                )
         _assert_semantic_candidate_current(
             engine,
             config_hash=config_hash,
@@ -3398,7 +4917,7 @@ def _build_semantic_index_locked(
         accepted_audit = {
             **audit,
             "semantic_ir_evaluation": evaluation,
-            "accepted_semantic_ir_evaluation": evaluation,
+            "accepted_semantic_ir_evaluation": (preserved_accepted_evaluation or evaluation),
         }
         with _immediate_session(engine) as session:
             _assert_semantic_candidate_current_in_session(

@@ -153,6 +153,7 @@ test('top-level route identity rejects the correct pathname with the wrong H1', 
     ['settings', '/settings', 'Settings'],
     ['conversations', '/conversations', 'Conversations'],
     ['media', '/media', 'Media'],
+    ['starred', '/starred', 'Starred'],
     ['search', '/search', 'Search the archive'],
     ['enrichment', '/enrichment', 'Transcripts and language signals'],
     ['people', '/people', 'People'],
@@ -692,6 +693,7 @@ function passingViewportResult() {
     'settings',
     'conversations',
     'media',
+    'starred',
     'search',
     'enrichment',
     'people',
@@ -704,8 +706,8 @@ function passingViewportResult() {
     'largest-conversation',
   ]
   return {
-    pageRuns: 17,
-    screenshotCount: 17,
+    pageRuns: 18,
+    screenshotCount: 18,
     initialContentMs: [120, 180],
     axeViolationCount: 0,
     axeIncompleteCount: 0,
@@ -1090,6 +1092,7 @@ test('artifact manifest requires the exact owner-only screenshot and trace inven
     'settings',
     'conversations',
     'media',
+    'starred',
     'search',
     'enrichment',
     'people',
@@ -1114,7 +1117,7 @@ test('artifact manifest requires the exact owner-only screenshot and trace inven
     }
     assert.equal(await artifactInventoryComplete(fixtureRoot), true)
     const manifest = await buildArtifactManifest(fixtureRoot)
-    assert.equal(manifest.length, 36)
+    assert.equal(manifest.length, 38)
     assert.ok(manifest.every((item) => /^[a-f0-9]{64}$/.test(item.sha256)))
 
     const insecureArtifact = path.join(fixtureRoot, 'desktop-home.png')

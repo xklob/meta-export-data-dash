@@ -4,6 +4,7 @@ import { type CSSProperties, type FormEvent, useMemo, useRef, useState } from 'r
 import { BoundedResultsHint } from '../components/BoundedResultsHint'
 import { CoverageNotice } from '../components/CoverageNotice'
 import { CursorWindowControls } from '../components/CursorWindowControls'
+import { StarButton } from '../components/StarButton'
 import { EmptyState, ErrorState, PageHeading, PageLoading, StatusBadge } from '../components/ui'
 import { api, type ActivityQuery } from '../lib/api'
 import type { ActivityItem, SortDirection } from '../lib/contracts'
@@ -92,7 +93,7 @@ function ActivityVirtualTable({ items, total, timezone }: { items: ActivityItem[
           <thead>
             <tr aria-rowindex={1}>
               <th>Activity</th><th>Category</th><th>Post context</th><th>Actor</th>
-              <th>Date</th><th>Files</th><th>Source</th><th>Jump</th>
+              <th>Date</th><th>Files</th><th>Source</th><th>Actions</th>
             </tr>
           </thead>
           <tbody style={{ height: virtualizer.getTotalSize() }}>
@@ -114,7 +115,7 @@ function ActivityVirtualTable({ items, total, timezone }: { items: ActivityItem[
                   <td data-label="Date">{formatTimestampMs(item.timestamp_ms, timezone)}</td>
                   <td className="number-cell" data-label="Files">{item.attachment_count ? <span className="inline-icon-value"><Files size={14} aria-hidden="true" /> {formatCount(item.attachment_count)} {item.attachment_count === 1 ? 'file' : 'files'}</span> : 'None'}</td>
                   <td className="activity-table__source" data-label="Source"><span className="source-path" title={item.source.relative_path}>{item.source.relative_path}</span></td>
-                  <td className="activity-table__jump" data-label="Jump"><a aria-label="Open source record" className="button button--secondary button--compact" href={item.jump.href}>Open<span className="activity-table__mobile-action-label" aria-hidden="true"> source record</span></a></td>
+                  <td className="activity-table__jump" data-label="Actions"><StarButton target={item.star_target ?? { target_type: 'activity', target_id: item.id }} star={item.star} label={`${sentenceCase(item.subtype)} activity`} /><a aria-label="Open source record" className="button button--secondary button--compact" href={item.jump.href}>Open<span className="activity-table__mobile-action-label" aria-hidden="true"> source record</span></a></td>
                 </tr>
               )
             })}

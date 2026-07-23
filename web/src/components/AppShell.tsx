@@ -19,6 +19,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  Star,
   Trash2,
   Users,
   WifiOff,
@@ -44,6 +45,7 @@ interface CurrentNavItem extends NavItem {
     | '/settings'
     | '/conversations'
     | '/media'
+    | '/starred'
     | '/search'
     | '/people'
     | '/events'
@@ -69,6 +71,7 @@ const futureNav: NavItem[] = []
 const browseNav: CurrentNavItem[] = [
   { label: 'Conversations', path: '/conversations', icon: MessageSquareText, stage: 2 },
   { label: 'Media', path: '/media', icon: Images, stage: 2 },
+  { label: 'Starred', path: '/starred', icon: Star },
   { label: 'Search', path: '/search', icon: Search, stage: 3 },
   { label: 'Enrichment', path: '/enrichment', icon: AudioLines, stage: 3 },
   { label: 'People', path: '/people', icon: Users, stage: 4 },
@@ -93,6 +96,7 @@ const pageLabels: Record<string, string> = {
   '/jobs': 'Jobs',
   '/conversations': 'Conversations',
   '/media': 'Media',
+  '/starred': 'Starred',
   '/search': 'Search',
   '/people': 'People',
   '/events': 'Events',
@@ -194,6 +198,7 @@ export function AppShell() {
           ? 'Verification pending'
           : 'Catalog partial'
   const currentStage = stageForPathname(pathname)
+  const currentSection = pathname === '/starred' ? 'Personal library' : `Stage ${currentStage}`
 
   return (
     <div className="app-shell">
@@ -332,7 +337,7 @@ export function AppShell() {
               <Menu size={20} />
             </button>
             <div className="topbar__title">
-              <span>{`Stage ${currentStage}`}</span>
+              <span>{currentSection}</span>
               <strong>{currentPageLabel}</strong>
             </div>
           </div>

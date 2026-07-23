@@ -34,6 +34,8 @@ from meta_archive.services.search_index import (
     embedding_model_spec,
 )
 
+_FLOAT32 = object()
+
 
 def _tree_state(root: Path) -> tuple[tuple[str, int, int, int, str | None, str | None], ...]:
     def entry(path: Path) -> tuple[str, int, int, int, str | None, str | None]:
@@ -60,10 +62,15 @@ class _FakeModel:
     def __init__(self) -> None:
         self.config = SimpleNamespace(id2label={0: "CONTRADICTION", 1: "ENTAILMENT", 2: "NEUTRAL"})
         self.to_calls: list[str] = []
+        self.float_calls = 0
         self.eval_calls = 0
 
     def to(self, device: str) -> _FakeModel:
         self.to_calls.append(device)
+        return self
+
+    def float(self) -> _FakeModel:
+        self.float_calls += 1
         return self
 
     def eval(self) -> _FakeModel:
@@ -124,6 +131,7 @@ def _install_fake_torch(
     torch.set_num_threads = set_num_threads  # type: ignore[attr-defined]
     torch.nn = SimpleNamespace(Linear=linear_type)  # type: ignore[attr-defined]
     torch.qint8 = qint8  # type: ignore[attr-defined]
+    torch.float32 = _FLOAT32  # type: ignore[attr-defined]
     torch.ao = SimpleNamespace(  # type: ignore[attr-defined]
         quantization=SimpleNamespace(quantize_dynamic=quantize_dynamic)
     )
@@ -285,11 +293,13 @@ def test_pinned_snapshot_resolver_refuses_chained_blob_symlink_without_mutation(
     assert _tree_state(tmp_path) == before
 
 
+@pytest.mark.parametrize("model_alias", ["multilingual-e5-small", "gte-modernbert-base"])
 def test_transformers_embedder_loads_exact_local_snapshot_without_mkdir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    model_alias: str,
 ) -> None:
-    spec = embedding_model_spec("multilingual-e5-small")
+    spec = embedding_model_spec(model_alias)
     cache_dir = tmp_path / "transformers"
     snapshot = _create_pinned_snapshot(cache_dir, spec.model_name, spec.model_revision)
     before = _tree_state(tmp_path)
@@ -307,8 +317,9 @@ def test_transformers_embedder_loads_exact_local_snapshot_without_mkdir(
     assert embedder._tokenizer is tokenizer
     assert embedder._model is model
     assert tokenizer_calls == [(snapshot, {"local_files_only": True})]
-    assert model_calls == [(snapshot, {"local_files_only": True})]
+    assert model_calls == [(snapshot, {"dtype": _FLOAT32, "local_files_only": True})]
     assert model.to_calls == ["cpu"]
+    assert model.float_calls == 1
     assert model.eval_calls == 1
     assert _tree_state(tmp_path) == before
 

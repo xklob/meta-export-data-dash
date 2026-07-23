@@ -24,6 +24,7 @@ import {
 } from 'lucide-react'
 import { type FormEvent, type UIEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { AttachmentPreview } from '../components/AttachmentPreview'
+import { StarButton } from '../components/StarButton'
 import { EmptyState, ErrorState, PageLoading, StatusBadge } from '../components/ui'
 import { api } from '../lib/api'
 import type { ConversationMessage, ConversationSegment, ConversationSummary } from '../lib/contracts'
@@ -129,6 +130,11 @@ function MessageCard({
         <strong>{message.sender || 'Unknown sender'}</strong>
         {message.sender_is_owner ? <span>You</span> : null}
         <time dateTime={new Date(message.timestamp_ms).toISOString()}>{formatTimestampMs(message.timestamp_ms, timezone)}</time>
+        <StarButton
+          target={message.star_target ?? { target_type: 'message', target_id: message.id }}
+          star={message.star}
+          label={`message from ${message.sender || 'Unknown sender'}`}
+        />
       </div>
       <div className="message-bubble">
         <div className="message-kind"><span>{sentenceCase(message.kind)}</span>{message.is_duplicate ? <span>Duplicate record</span> : null}</div>
@@ -160,10 +166,15 @@ function MessageCard({
                   compact
                   seekMs={focusedAttachmentId === attachment.id ? mediaStartMs : undefined}
                 />
-                <div>
+                <div className="message-attachment__meta">
                   <strong>{attachment.filename || sentenceCase(attachment.kind)}</strong>
                   <span>{formatBytes(attachment.size_bytes)} · {sentenceCase(attachment.availability)}</span>
                 </div>
+                <StarButton
+                  target={attachment.star_target ?? { target_type: 'attachment', target_id: attachment.id }}
+                  star={attachment.star}
+                  label={`attachment ${attachment.filename || sentenceCase(attachment.kind)}`}
+                />
               </div>
             ))}
           </div>
@@ -643,7 +654,7 @@ export function ConversationPage() {
     <div className="page-stack conversation-reader-page">
       <nav className="reader-breadcrumb" aria-label="Breadcrumb"><Link to="/conversations"><ArrowLeft size={14} /> All conversations</Link><span>/</span><span aria-current="page">{conversation.title}</span></nav>
       <header className="reader-heading panel">
-        <div className="reader-heading__title"><span className="reader-avatar" aria-hidden="true"><MessageSquareText size={22} /></span><div><p className="eyebrow">{sentenceCase(conversation.type)} conversation</p><h1>{conversation.title || 'Untitled conversation'}</h1><p>{conversation.source_categories.map(sentenceCase).join(' · ')}</p>{conversation.content_profile.kind === 'media_only' ? <StatusBadge status="media only" /> : null}{conversation.content_profile.kind === 'metadata_only' ? <StatusBadge status="metadata only" /> : null}{conversation.type === 'direct' ? <StatusBadge status={conversation.identity?.status ?? 'provisional'} /> : null}</div></div>
+        <div className="reader-heading__title"><span className="reader-avatar" aria-hidden="true"><MessageSquareText size={22} /></span><div><p className="eyebrow">{sentenceCase(conversation.type)} conversation</p><h1>{conversation.title || 'Untitled conversation'}</h1><p>{conversation.source_categories.map(sentenceCase).join(' · ')}</p>{conversation.content_profile.kind === 'media_only' ? <StatusBadge status="media only" /> : null}{conversation.content_profile.kind === 'metadata_only' ? <StatusBadge status="metadata only" /> : null}{conversation.type === 'direct' ? <StatusBadge status={conversation.identity?.status ?? 'provisional'} /> : null}</div><StarButton target={conversation.star_target ?? { target_type: 'conversation', target_id: conversation.id }} star={conversation.star} label={`conversation ${conversation.title || 'Untitled conversation'}`} compact={false} /></div>
         <dl className="reader-heading__stats">
           <div><dt>Messages</dt><dd>{formatCount(conversation.message_counts.total)}</dd></div>
           <div><dt>Sent / received</dt><dd>{formatCount(conversation.message_counts.sent)} / {formatCount(conversation.message_counts.received)}</dd></div>
@@ -679,7 +690,7 @@ export function ConversationPage() {
             searchResults.isLoading ? <div className="inline-loading" role="status">Searching local messages…</div> : searchResults.isError ? <ErrorState error={searchResults.error} onRetry={() => searchResults.refetch()} /> : searchItems.length === 0 ? <EmptyState title="No keyword matches" description={`No messages in this conversation contain “${searchQuery}”.`} /> : (
               <div className="thread-search-results">
                 <p>{formatCount(searchResults.data?.pages[0]?.page.total)} matches for <strong>“{searchQuery}”</strong></p>
-                <ul>{searchItems.map((message) => <li key={message.id}><button type="button" onClick={() => jumpToMessage(message.id)}><span><strong>{message.sender}</strong><time>{formatTimestampMs(message.timestamp_ms, timezone)}</time></span><p>{message.content || message.transcription || sentenceCase(message.kind)}</p><small>{message.matched_fields?.map(sentenceCase).join(', ')} · Jump to message</small></button></li>)}</ul>
+                <ul>{searchItems.map((message) => <li key={message.id}><button className="thread-search-result__jump" type="button" onClick={() => jumpToMessage(message.id)}><span><strong>{message.sender}</strong><time>{formatTimestampMs(message.timestamp_ms, timezone)}</time></span><p>{message.content || message.transcription || sentenceCase(message.kind)}</p><small>{message.matched_fields?.map(sentenceCase).join(', ')} · Jump to message</small></button><StarButton target={message.star_target ?? { target_type: 'message', target_id: message.id }} star={message.star} label={`message from ${message.sender || 'Unknown sender'}`} /></li>)}</ul>
                 {searchResults.hasNextPage ? <button className="button button--secondary" type="button" disabled={searchResults.isFetchingNextPage} onClick={() => searchResults.fetchNextPage()}>{searchResults.isFetchingNextPage ? 'Loading…' : 'Load more matches'}</button> : null}
               </div>
             )

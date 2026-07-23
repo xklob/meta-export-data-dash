@@ -1,0 +1,277 @@
+.starred-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.starred-toolbar nav {
+  min-width: 0;
+}
+
+.starred-toolbar__categories {
+  flex: 1;
+}
+
+.starred-toolbar nav button {
+  gap: 0.4rem;
+}
+
+.starred-toolbar nav button > span {
+  min-width: 1.4rem;
+  padding: 0.08rem 0.32rem;
+  color: var(--ink-soft);
+  background: rgba(255, 255, 255, 0.72);
+  border-radius: 999px;
+  font-size: 0.58rem;
+  text-align: center;
+}
+
+.starred-toolbar .filter-field {
+  min-width: 190px;
+}
+
+.starred-results {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.starred-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.starred-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-height: 100%;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.8rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.starred-card__preview {
+  width: 150px;
+  min-height: 190px;
+  background: var(--surface-subtle);
+  border-right: 1px solid var(--border);
+}
+
+.starred-card__preview > * {
+  width: 100%;
+  height: 100%;
+}
+
+.starred-card__icon {
+  display: grid;
+  width: 54px;
+  height: 54px;
+  place-items: center;
+  margin: 1rem 0 0 1rem;
+  color: var(--amber);
+  background: var(--amber-soft);
+  border-radius: 0.7rem;
+}
+
+.starred-card__body {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 0.55rem;
+  padding: 1rem;
+}
+
+.starred-card__body > header,
+.starred-card__body > footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.starred-card__body > header > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.starred-card__body h2 {
+  overflow-wrap: anywhere;
+  font-size: 0.96rem;
+  line-height: 1.3;
+}
+
+.starred-card__subtitle,
+.starred-card__excerpt {
+  color: var(--ink-soft);
+  font-size: 0.71rem;
+  line-height: 1.5;
+}
+
+.starred-card__excerpt {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  white-space: pre-wrap;
+}
+
+.starred-card__media-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+}
+
+.starred-card__media-meta div {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.starred-card__media-meta dt {
+  color: var(--muted);
+  font-size: 0.56rem;
+  text-transform: uppercase;
+}
+
+.starred-card__media-meta dd,
+.starred-card__counts {
+  color: var(--ink);
+  font-size: 0.66rem;
+}
+
+.starred-card__body > footer {
+  align-self: end;
+  padding-top: 0.25rem;
+  border-top: 1px solid var(--border);
+}
+
+.starred-card__body > footer > span:first-child {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.2rem 0.35rem;
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.starred-card__body > footer small {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.starred-card__no-jump {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.starred-pagination-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.7rem 0.8rem;
+  color: var(--red);
+  background: var(--red-soft);
+  border: 1px solid #e8bcbc;
+  border-radius: 0.65rem;
+  font-size: 0.68rem;
+  font-weight: 650;
+}
+
+@media (max-width: 920px) {
+  .starred-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 680px) {
+  .starred-toolbar nav button,
+  .starred-toolbar select {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 620px) {
+  .starred-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+  }
+
+  .starred-metrics .metric-card {
+    min-height: 92px;
+    gap: 0.5rem;
+    padding: 0.65rem;
+  }
+
+  .starred-metrics .metric-card__icon {
+    width: 30px;
+    height: 30px;
+  }
+
+  .starred-metrics .metric-card__body p {
+    font-size: 0.63rem;
+    line-height: 1.3;
+  }
+
+  .starred-metrics .metric-card__body strong {
+    font-size: 1.08rem;
+  }
+
+  .starred-metrics .metric-card__body span {
+    font-size: 0.6rem;
+    line-height: 1.3;
+    white-space: normal;
+  }
+
+  .starred-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .starred-toolbar__categories {
+    width: 100%;
+  }
+
+  .starred-toolbar .filter-field {
+    min-width: 0;
+  }
+
+  .starred-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .starred-card__preview {
+    width: 100%;
+    height: 210px;
+    min-height: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .starred-card__icon {
+    margin-bottom: -0.35rem;
+  }
+
+  .starred-card__body > footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .starred-card__body > footer > span:first-child {
+    font-size: 0.76rem;
+  }
+
+  .starred-card__body > footer small {
+    font-size: 0.7rem;
+  }
+
+  .starred-pagination-error {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

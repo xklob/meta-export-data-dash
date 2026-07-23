@@ -6,6 +6,7 @@ import math
 import shutil
 import sqlite3
 from collections.abc import Iterator, Sequence
+from dataclasses import asdict
 from pathlib import Path
 
 import lancedb  # type: ignore[import-untyped]
@@ -44,14 +45,18 @@ from meta_archive.services.search import (
     semantic_search,
 )
 from meta_archive.services.search_index import (
+    AUTO_EMBEDDING_MODEL_ALIAS,
     GAP_MS,
     HELD_OUT_THRESHOLDS,
     MAX_APPROX_TOKENS,
+    SEMANTIC_MODEL_SELECTION_POLICY,
     EmbeddingModelSpec,
     SemanticIndexAcceptanceError,
     SemanticIndexBusyError,
+    SemanticIndexManualActivationError,
     WindowDraft,
     WindowTurn,
+    activate_rejected_semantic_candidate,
     approximate_token_count,
     build_semantic_index,
     deterministic_message_windows,
@@ -189,15 +194,49 @@ def fixture_reranker_factory(_spec: RerankerSpec) -> FixtureReranker:
     return FixtureReranker()
 
 
+_REAL_DIRECT_CONFLICT_DEVELOPMENT_EVALUATION = (
+    search_index_service._direct_conflict_development_evaluation
+)
+
+
+def _passing_fixture_direct_conflict_calibration(
+    *_args: object,
+    **_kwargs: object,
+) -> dict[str, object]:
+    return {
+        **search_index_service._direct_conflict_calibration_base(),
+        "status": "passed",
+        "passed": True,
+        "feedback_revision": {
+            "version": "fixture-direct-conflict-feedback-v1",
+            "sha256": "a" * 64,
+            "row_count": 20,
+        },
+        "feedback_revision_stable_during_evaluation": True,
+        "model_metadata": {
+            "classifier": "fixture",
+            "ranker_version": "fixture-direct-conflict-ranker-v1",
+        },
+        "private_material_fingerprint_sha256": "b" * 64,
+    }
+
+
 @pytest.fixture
 def stage3_catalog(
-    archive_layout: ArchiveLayout, catalog_engine: Engine
+    archive_layout: ArchiveLayout,
+    catalog_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[tuple[ArchiveLayout, Engine]]:
     shutil.copytree(MESSAGE_FIXTURES, archive_layout.root, dirs_exist_ok=True)
     shutil.copytree(ACTIVITY_FIXTURES, archive_layout.root / "activity-package")
     scan_archive(archive_layout, catalog_engine, hash_files=True)
     import_messages(archive_layout, catalog_engine)
     import_activities(archive_layout, catalog_engine)
+    monkeypatch.setattr(
+        search_index_service,
+        "_direct_conflict_development_evaluation",
+        _passing_fixture_direct_conflict_calibration,
+    )
     yield archive_layout, catalog_engine
 
 
@@ -230,6 +269,42 @@ def test_retrieval_metrics_report_recall_mrr_and_ndcg() -> None:
     assert metrics["recall_at_k"] == pytest.approx(0.75)
     assert metrics["mrr"] == pytest.approx(0.75)
     assert metrics["ndcg_at_k"] == pytest.approx((expected_first_ndcg + expected_second_ndcg) / 2)
+
+
+def test_semantic_upgrade_policy_rejects_flat_or_slightly_worse_candidate() -> None:
+    incumbent = {"recall_at_k": 0.70, "mrr": 0.60, "ndcg_at_k": 0.58}
+
+    slightly_worse = search_index_service._semantic_upgrade_metric_comparison(
+        {"recall_at_k": 0.68, "mrr": 0.58, "ndcg_at_k": 0.56},
+        incumbent,
+    )
+    flat = search_index_service._semantic_upgrade_metric_comparison(
+        incumbent,
+        incumbent,
+    )
+
+    for comparison in (slightly_worse, flat):
+        assert comparison["status"] == "failed_no_demonstrated_improvement"
+        assert comparison["passed"] is False
+        assert comparison["required_for_activation"] is True
+        assert comparison["demonstrated_improvement_required"] is True
+        assert comparison["demonstrated_improvement"] is False
+        assert all(
+            metric["regression_exceeds_tolerance"] is False
+            for metric in comparison["metrics"].values()
+        )
+
+
+def test_semantic_upgrade_policy_accepts_one_improvement_without_regression() -> None:
+    comparison = search_index_service._semantic_upgrade_metric_comparison(
+        {"recall_at_k": 0.68, "mrr": 0.60, "ndcg_at_k": 0.60},
+        {"recall_at_k": 0.70, "mrr": 0.60, "ndcg_at_k": 0.58},
+    )
+
+    assert comparison["passed"] is True
+    assert comparison["demonstrated_improvement"] is True
+    assert comparison["demonstrated_improvement_required"] is True
+    assert comparison["metrics"]["ndcg_at_k"]["demonstrated_improvement"] is True
 
 
 def test_literal_ranker_runs_cross_encoder_only_for_exact_margin_ties() -> None:
@@ -593,6 +668,12 @@ def test_semantic_index_is_audited_idempotent_and_resumable(
     assert resumed.embedded_count == resumed.window_count - completed_before_resume
     assert len(pending_statements) > 1
     assert all("search_windows.id > ?" in statement for statement in pending_statements)
+    with Session(engine) as session:
+        resumed_config = session.get(SemanticIndexConfig, resumed.config_hash)
+        assert resumed_config is not None
+        prior_accepted_evaluation = json.loads(
+            json.dumps(resumed_config.audit_json["accepted_semantic_ir_evaluation"])
+        )
 
     unchanged = build_semantic_index(layout, engine, embedder=FixtureEmbedder(), batch_size=2)
     assert unchanged.config_hash == resumed.config_hash
@@ -620,7 +701,16 @@ def test_semantic_index_is_audited_idempotent_and_resumable(
             search_index_service.embedding_implementation_identity(FIXTURE_SPEC)
         )
         evaluation = active.audit_json["semantic_ir_evaluation"]
-        assert evaluation == active.audit_json["accepted_semantic_ir_evaluation"]
+        assert active.audit_json["accepted_semantic_ir_evaluation"] == prior_accepted_evaluation
+        assert evaluation != prior_accepted_evaluation
+        assert evaluation["same_config_accepted_evidence"] == {
+            "status": "passed_preserved_prior_acceptance",
+            "required_for_activation": True,
+            "passed": True,
+            "reason_codes": [],
+            "prior_production_acceptance": False,
+            "preserves_prior_accepted_evaluation": True,
+        }
         assert evaluation["passed"] is True
         assert evaluation["candidate"]["query_engine"] == "lancedb-exact-vector-search"
         assert evaluation["automatic_known_item"]["status"] == "passed"
@@ -669,6 +759,244 @@ def test_semantic_index_is_audited_idempotent_and_resumable(
     )
     assert duplicate_recovery.embedded_count == duplicate_recovery.window_count
     assert vector_database.open_table(recovered.vector_table).count_rows() == recovered.window_count
+
+
+def test_production_accepted_same_config_rerun_preserves_incumbent_comparison(
+    stage3_catalog: tuple[ArchiveLayout, Engine],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    layout, engine = stage3_catalog
+    bge_spec = search_index_service.embedding_model_spec("bge-base-en-v1.5")
+
+    class BgeFixtureEmbedder:
+        spec = bge_spec
+
+        @staticmethod
+        def artifact_fingerprint() -> str:
+            return "sha256:production-bge-fixture"
+
+        @staticmethod
+        def _vector(text: str) -> list[float]:
+            digest = hashlib.sha256(text.encode("utf-8")).digest()
+            head = [float(digest[index] + 1) for index in range(4)]
+            norm = sum(value * value for value in head) ** 0.5
+            return [*(value / norm for value in head), *([0.0] * (bge_spec.dimensions - 4))]
+
+        def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
+            return [self._vector(text) for text in texts]
+
+        def embed_query(self, text: str) -> list[float]:
+            return self._vector(text)
+
+    incumbent = build_semantic_index(
+        layout,
+        engine,
+        embedder=BgeFixtureEmbedder(),
+        batch_size=4,
+    )
+    with Session(engine) as session, session.begin():
+        active = session.get(SemanticIndexConfig, incumbent.config_hash)
+        assert active is not None
+        audit = json.loads(json.dumps(active.audit_json))
+        accepted = audit["accepted_semantic_ir_evaluation"]
+        accepted["production_acceptance_passed"] = True
+        accepted["active_incumbent_comparison"] = {
+            **search_index_service._semantic_upgrade_metric_comparison(
+                {"recall_at_k": 0.70, "mrr": 0.61, "ndcg_at_k": 0.59},
+                {"recall_at_k": 0.69, "mrr": 0.60, "ndcg_at_k": 0.58},
+            ),
+            "test_incumbent_model": "intfloat/multilingual-e5-small",
+        }
+        held_out = accepted["held_out_feedback"]
+        held_out.update(
+            {
+                "status": "passed",
+                "passed": True,
+                "used_for_activation": True,
+                "feedback_revision_stable_during_evaluation": True,
+                "evidence_truncated": False,
+            }
+        )
+        development = accepted["direct_conflict_development_calibration"]
+        development.update(
+            {
+                "status": "passed",
+                "passed": True,
+                "feedback_revision": {
+                    "version": "direct-conflict-development-feedback-v1",
+                    "sha256": "d" * 64,
+                    "row_count": 32,
+                },
+                "feedback_revision_stable_during_evaluation": True,
+                "model_metadata": {
+                    "classifier": "LinearSVC",
+                    "ranker_version": "linear-svc-direct-conflict-v2",
+                    "parameters": {"C": 1.0},
+                },
+            }
+        )
+        audit["semantic_ir_evaluation"] = accepted
+        audit["accepted_semantic_ir_evaluation"] = accepted
+        active.audit_json = audit
+        prior_accepted_bytes = json.dumps(
+            accepted,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+
+    def current_production_evaluation(
+        *_args: object,
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        current = json.loads(prior_accepted_bytes)
+        current["evaluated_at"] = "2026-07-23T16:00:00+00:00"
+        current["active_incumbent_comparison"] = {
+            "status": "not_required_no_different_active_incumbent",
+            "required_for_activation": False,
+            "passed": None,
+            "reason_codes": [],
+        }
+        return current
+
+    monkeypatch.setattr(
+        search_index_service,
+        "_semantic_ir_evaluation",
+        current_production_evaluation,
+    )
+    monkeypatch.setattr(
+        search_index_service,
+        "AUTO_EMBEDDING_MODEL_ALIAS",
+        bge_spec.alias,
+    )
+    refreshed = build_semantic_index(
+        layout,
+        engine,
+        embedder_factory=lambda _spec: BgeFixtureEmbedder(),
+        model_alias="auto",
+        rebuild_windows=False,
+        batch_size=4,
+    )
+
+    assert refreshed.config_hash == incumbent.config_hash
+    assert refreshed.embedded_count == 0
+    with Session(engine) as session:
+        active = session.get(SemanticIndexConfig, incumbent.config_hash)
+        job = session.get(Job, refreshed.job_id)
+        assert active is not None
+        assert job is not None
+        accepted_after = active.audit_json["accepted_semantic_ir_evaluation"]
+        current = active.audit_json["semantic_ir_evaluation"]
+        assert active.active is True
+        assert active.status == "ready"
+        assert active.audit_json["model_selection"] == "automatic_default"
+        assert active.audit_json["selected_model"]["alias"] == bge_spec.alias
+        assert (
+            json.dumps(accepted_after, sort_keys=True, separators=(",", ":")).encode()
+            == prior_accepted_bytes
+        )
+        assert current["same_config_accepted_evidence"] == {
+            "status": "passed_preserved_prior_acceptance",
+            "required_for_activation": True,
+            "passed": True,
+            "reason_codes": [],
+            "prior_production_acceptance": True,
+            "preserves_prior_accepted_evaluation": True,
+        }
+        assert current["production_acceptance_passed"] is True
+        assert job.status == "completed"
+        assert job.counters_json["production_acceptance_passed"] is True
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_reason"),
+    [
+        ("revision_mismatch", "held_out_feedback_revision_mismatch"),
+        ("development_revision_mismatch", "direct_conflict_feedback_revision_mismatch"),
+        ("ranker_mismatch", "direct_conflict_ranker_mismatch"),
+        ("evaluator_mismatch", "evaluator_revision_mismatch"),
+        ("pipeline_mismatch", "held_out_ranking_pipeline_mismatch"),
+        ("stale", "direct_conflict_feedback_stale"),
+        ("failed", "current_evaluation_not_passed"),
+    ],
+)
+def test_same_config_rerun_rejects_unpreservable_acceptance_evidence(
+    stage3_catalog: tuple[ArchiveLayout, Engine],
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+    expected_reason: str,
+) -> None:
+    layout, engine = stage3_catalog
+    incumbent = build_semantic_index(
+        layout,
+        engine,
+        embedder=FingerprintedFixtureEmbedder("sha256:same-config-rerun"),
+        batch_size=4,
+    )
+    with Session(engine) as session:
+        active = session.get(SemanticIndexConfig, incumbent.config_hash)
+        assert active is not None
+        prior_accepted_evaluation = json.loads(
+            json.dumps(active.audit_json["accepted_semantic_ir_evaluation"])
+        )
+
+    original_evaluation = search_index_service._semantic_ir_evaluation
+
+    def mutated_evaluation(*args: object, **kwargs: object) -> dict[str, object]:
+        evaluation = json.loads(json.dumps(original_evaluation(*args, **kwargs)))
+        if mutation == "revision_mismatch":
+            revision = evaluation["held_out_feedback"]["feedback_revision"]
+            revision["sha256"] = "f" * 64
+        elif mutation == "development_revision_mismatch":
+            development = evaluation["direct_conflict_development_calibration"]
+            development["feedback_revision"] = {
+                "version": "synthetic-development-revision",
+                "sha256": "f" * 64,
+                "row_count": 1,
+            }
+        elif mutation == "ranker_mismatch":
+            development = evaluation["direct_conflict_development_calibration"]
+            development["model_metadata"] = {"ranker_version": "synthetic-ranker"}
+        elif mutation == "evaluator_mismatch":
+            evaluation["evaluator_version"] = "synthetic-evaluator"
+        elif mutation == "pipeline_mismatch":
+            evaluation["held_out_feedback"]["ranking_pipeline"] = "synthetic-pipeline"
+        elif mutation == "stale":
+            development = evaluation["direct_conflict_development_calibration"]
+            development["status"] = "stale_feedback"
+            development["feedback_revision_stable_during_evaluation"] = False
+        else:
+            evaluation["passed"] = False
+            evaluation["decision"] = "synthetic failed rerun"
+        return evaluation
+
+    monkeypatch.setattr(
+        search_index_service,
+        "_semantic_ir_evaluation",
+        mutated_evaluation,
+    )
+    with pytest.raises(SemanticIndexAcceptanceError) as failure:
+        build_semantic_index(
+            layout,
+            engine,
+            embedder=FingerprintedFixtureEmbedder("sha256:same-config-rerun"),
+            rebuild_windows=False,
+            batch_size=4,
+        )
+
+    comparison = failure.value.evaluation["same_config_accepted_evidence"]
+    assert comparison["status"] == "failed_stale_acceptance"
+    assert comparison["required_for_activation"] is True
+    assert comparison["passed"] is False
+    assert expected_reason in comparison["reason_codes"]
+    with Session(engine) as session:
+        still_active = session.get(SemanticIndexConfig, incumbent.config_hash)
+        assert still_active is not None
+        assert still_active.active is True
+        assert still_active.status == "ready"
+        assert (
+            still_active.audit_json["accepted_semantic_ir_evaluation"] == prior_accepted_evaluation
+        )
+        assert still_active.audit_json["semantic_ir_evaluation"] == failure.value.evaluation
 
 
 @pytest.mark.parametrize("corruption", ["zero-vector", "metadata"])
@@ -770,7 +1098,19 @@ def test_semantic_index_evaluates_held_out_feedback_separately(
     with Session(engine) as session:
         config = session.get(SemanticIndexConfig, summary.config_hash)
         assert config is not None
-        held_out = config.audit_json["semantic_ir_evaluation"]["held_out_feedback"]
+        evaluation = config.audit_json["semantic_ir_evaluation"]
+        held_out = evaluation["held_out_feedback"]
+    assert evaluation["evaluator_version"] == "semantic-ir-acceptance-v8"
+    assert evaluation["active_incumbent_comparison"] == {
+        "status": "not_required_no_different_active_incumbent",
+        "required_for_activation": False,
+        "passed": None,
+        "reason_codes": [],
+        "non_regression_tolerance": 0.02,
+        "demonstrated_improvement_threshold": 0.02,
+        "demonstrated_improvement_required": False,
+        "demonstrated_improvement": None,
+    }
     assert held_out["benchmark_kind"] == "held_out_user_feedback"
     assert held_out["status"] == "passed"
     assert held_out["used_for_activation"] is True
@@ -784,6 +1124,26 @@ def test_semantic_index_evaluates_held_out_feedback_separately(
         for _query, documents in held_out_reranker.calls
     )
     assert held_out["query_group_counts_by_mode"] == {"semantic": 3, "hybrid": 2}
+    assert held_out["metrics_by_mode"]["semantic"]["query_count"] == 3
+    assert held_out["metrics_by_mode"]["semantic"]["recall_at_k"] == 1.0
+    assert held_out["metrics_by_mode"]["hybrid"]["query_count"] == 2
+    assert held_out["metrics_by_mode"]["hybrid"]["recall_at_k"] == 1.0
+    assert held_out["cosine_candidate_recall"] == {
+        "query_count": 5,
+        "recall_at_50": 1.0,
+        "recall_at_200": 1.0,
+    }
+    assert held_out["cosine_candidate_recall_by_mode"]["semantic"] == {
+        "query_count": 3,
+        "recall_at_50": 1.0,
+        "recall_at_200": 1.0,
+    }
+    assert held_out["cosine_candidate_recall_by_mode"]["hybrid"] == {
+        "query_count": 2,
+        "recall_at_50": 1.0,
+        "recall_at_200": 1.0,
+    }
+    assert held_out["evidence_truncated"] is False
     assert held_out["query_details_persisted"] is False
     assert held_out["feedback_revision_stable_during_evaluation"] is True
     assert "queries" not in held_out
@@ -792,7 +1152,84 @@ def test_semantic_index_evaluates_held_out_feedback_separately(
     assert argument_gate["passed"] is False
     assert argument_gate["query_group_count"] == 1
     assert argument_gate["judgment_count"] == 1
-    assert config.audit_json["semantic_ir_evaluation"]["production_acceptance_passed"] is False
+    assert config.audit_json["semantic_ir_evaluation"]["production_acceptance_passed"] is True
+
+
+@pytest.mark.parametrize("truncation", ["queries", "judgments"])
+def test_held_out_evaluation_fails_closed_when_evidence_is_truncated(
+    stage3_catalog: tuple[ArchiveLayout, Engine],
+    monkeypatch: pytest.MonkeyPatch,
+    truncation: str,
+) -> None:
+    layout, engine = stage3_catalog
+    rebuild_search_windows(layout, engine, generation=f"{truncation}-truncation-fixture")
+    with Session(engine) as session:
+        windows = list(session.scalars(select(SearchWindow).order_by(SearchWindow.id)))
+    distinct_windows: list[SearchWindow] = []
+    seen_text: set[str] = set()
+    for window in windows:
+        if window.text_display in seen_text:
+            continue
+        distinct_windows.append(window)
+        seen_text.add(window.text_display)
+        if len(distinct_windows) == 7:
+            break
+    assert len(distinct_windows) == 7
+
+    with Session(engine) as session, session.begin():
+        for index, window in enumerate(distinct_windows[:5]):
+            session.add(
+                RelevanceFeedback(
+                    id=f"truncation-primary-{index}",
+                    query_sha256=hashlib.sha256(window.text_display.encode()).hexdigest(),
+                    query_text=window.text_display,
+                    search_mode="semantic",
+                    result_id=f"window:{window.id}",
+                    label="relevant",
+                    evaluation_split="test",
+                )
+            )
+        if truncation == "judgments":
+            query_window = distinct_windows[0]
+            for index, target in enumerate(distinct_windows[5:7]):
+                session.add(
+                    RelevanceFeedback(
+                        id=f"truncation-extra-{index}",
+                        query_sha256=hashlib.sha256(query_window.text_display.encode()).hexdigest(),
+                        query_text=query_window.text_display,
+                        search_mode="semantic",
+                        result_id=f"window:{target.id}",
+                        label="not_relevant",
+                        evaluation_split="test",
+                    )
+                )
+
+    if truncation == "queries":
+        monkeypatch.setattr(search_index_service, "FEEDBACK_QUERY_CAP", 4)
+    else:
+        monkeypatch.setattr(
+            search_index_service,
+            "FEEDBACK_JUDGMENT_CAP_PER_QUERY",
+            2,
+        )
+
+    with pytest.raises(SemanticIndexAcceptanceError) as failure:
+        build_semantic_index(
+            layout,
+            engine,
+            embedder=FixtureEmbedder(),
+            reranker_factory=lambda _spec: ExactMatchFixtureReranker(),
+            rebuild_windows=False,
+            batch_size=4,
+        )
+
+    held_out = failure.value.evaluation["held_out_feedback"]
+    assert held_out["status"] == "truncated_evidence"
+    assert held_out["passed"] is False
+    assert held_out["used_for_activation"] is True
+    assert held_out["evidence_truncated"] is True
+    assert held_out["query_selection_truncated"] is (truncation == "queries")
+    assert held_out["judgments_truncated"] is (truncation == "judgments")
 
 
 def test_tagged_argument_group_requires_substantive_judgments_and_runtime_relevance(
@@ -854,7 +1291,7 @@ def test_tagged_argument_group_requires_substantive_judgments_and_runtime_releva
         assert config is not None
         evaluation = config.audit_json["semantic_ir_evaluation"]
     argument_gate = evaluation["held_out_feedback"]["argument_direct_conflict"]
-    assert evaluation["production_acceptance_passed"] is False
+    assert evaluation["production_acceptance_passed"] is True
     assert argument_gate["status"] == "passed"
     assert argument_gate["passed"] is True
     assert argument_gate["required_for_production_acceptance"] is False
@@ -879,20 +1316,28 @@ def test_tagged_argument_group_requires_substantive_judgments_and_runtime_releva
         stale_positive.result_id = "window:missing-private-fixture"
         non_window_negative.result_id = "message:non-window-private-fixture"
 
-    rebuilt = build_semantic_index(
-        layout,
-        engine,
-        embedder=FixtureEmbedder(),
-        reranker_factory=lambda _spec: ArgumentFixtureReranker(),
-        rebuild_windows=False,
-        batch_size=4,
-    )
+    with pytest.raises(SemanticIndexAcceptanceError) as rebuild_failure:
+        build_semantic_index(
+            layout,
+            engine,
+            embedder=FixtureEmbedder(),
+            reranker_factory=lambda _spec: ArgumentFixtureReranker(),
+            rebuild_windows=False,
+            batch_size=4,
+        )
+    reevaluation = rebuild_failure.value.evaluation
     with Session(engine) as session:
-        config = session.get(SemanticIndexConfig, rebuilt.config_hash)
+        config = session.get(SemanticIndexConfig, summary.config_hash)
         assert config is not None
-        reevaluation = config.audit_json["semantic_ir_evaluation"]
+        assert config.active is True
+        assert config.status == "ready"
+        assert config.audit_json["semantic_ir_evaluation"] == reevaluation
     invalid_gate = reevaluation["held_out_feedback"]["argument_direct_conflict"]
     assert reevaluation["production_acceptance_passed"] is False
+    assert (
+        "held_out_feedback_revision_mismatch"
+        in reevaluation["same_config_accepted_evidence"]["reason_codes"]
+    )
     assert invalid_gate["status"] == "incomplete_or_inconsistent"
     assert invalid_gate["passed"] is False
     assert invalid_gate["reviewed_judgment_count"] == 10
@@ -907,6 +1352,11 @@ def test_literal_direct_conflict_calibration_drives_shared_runtime_and_fails_sta
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     layout, engine = stage3_catalog
+    monkeypatch.setattr(
+        search_index_service,
+        "_direct_conflict_development_evaluation",
+        _REAL_DIRECT_CONFLICT_DEVELOPMENT_EVALUATION,
+    )
     rebuild_search_windows(layout, engine, generation="direct-conflict-development-fixture")
     with Session(engine) as session:
         windows = list(session.scalars(select(SearchWindow).order_by(SearchWindow.id)))
@@ -1185,6 +1635,294 @@ def test_held_out_feedback_can_reject_an_automatic_benchmark_pass(
     assert len(reranker.calls) == 5
 
 
+def test_comparable_incumbent_regression_rejects_candidate_and_preserves_incumbent(
+    stage3_catalog: tuple[ArchiveLayout, Engine],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    layout, engine = stage3_catalog
+    incumbent = build_semantic_index(
+        layout,
+        engine,
+        embedder=FingerprintedFixtureEmbedder("sha256:upgrade-incumbent"),
+        batch_size=4,
+    )
+    feedback_revision = {
+        "version": "held-out-feedback-revision-v1",
+        "sha256": "a" * 64,
+        "row_count": 50,
+    }
+
+    def held_out_payload(metrics: dict[str, int | float]) -> dict[str, object]:
+        return {
+            "benchmark_kind": "held_out_user_feedback",
+            "status": "passed",
+            "passed": True,
+            "used_for_activation": True,
+            "ranking_pipeline": "runtime-search-v2",
+            "reranker": asdict(DEFAULT_RERANKER_SPEC),
+            "feedback_revision": feedback_revision,
+            "feedback_revision_stable_during_evaluation": True,
+            "metrics": metrics,
+            "evidence_truncated": False,
+        }
+
+    incumbent_metrics: dict[str, int | float] = {
+        "query_count": 5,
+        "k": 10,
+        "recall_at_k": 0.70,
+        "mrr": 0.60,
+        "ndcg_at_k": 0.58,
+    }
+    candidate_metrics: dict[str, int | float] = {
+        "query_count": 5,
+        "k": 10,
+        "recall_at_k": 0.67,
+        "mrr": 0.60,
+        "ndcg_at_k": 0.58,
+    }
+    with Session(engine) as session, session.begin():
+        active = session.get(SemanticIndexConfig, incumbent.config_hash)
+        assert active is not None
+        audit = json.loads(json.dumps(active.audit_json))
+        accepted = audit["accepted_semantic_ir_evaluation"]
+        corpus_revision = str(accepted["candidate"]["corpus_revision"])
+        accepted["held_out_feedback"] = held_out_payload(incumbent_metrics)
+        audit["accepted_semantic_ir_evaluation"] = accepted
+        active.audit_json = audit
+
+    incomparable_payload = held_out_payload(candidate_metrics)
+    incomparable_payload["feedback_revision"] = {
+        **feedback_revision,
+        "sha256": "b" * 64,
+    }
+    incomparable = search_index_service._active_incumbent_comparison(
+        engine,
+        candidate_config_hash="candidate-not-yet-built",
+        candidate_corpus_revision=corpus_revision,
+        candidate_held_out=incomparable_payload,
+    )
+    assert incomparable["status"] == "failed_incomparable_incumbent"
+    assert incomparable["required_for_activation"] is True
+    assert incomparable["passed"] is False
+    assert "feedback_revision_mismatch" in incomparable["reason_codes"]
+
+    monkeypatch.setattr(
+        search_index_service,
+        "_held_out_feedback_evaluation",
+        lambda *_args, **_kwargs: incomparable_payload,
+    )
+    with pytest.raises(SemanticIndexAcceptanceError) as incomparable_failure:
+        build_semantic_index(
+            layout,
+            engine,
+            embedder=FingerprintedFixtureEmbedder("sha256:upgrade-incomparable"),
+            rebuild_windows=False,
+            batch_size=4,
+        )
+    failed_comparison = incomparable_failure.value.evaluation["active_incumbent_comparison"]
+    assert failed_comparison["status"] == "failed_incomparable_incumbent"
+    assert failed_comparison["required_for_activation"] is True
+    assert failed_comparison["passed"] is False
+    assert "feedback_revision_mismatch" in failed_comparison["reason_codes"]
+    with Session(engine) as session:
+        still_active = session.scalar(
+            select(SemanticIndexConfig).where(SemanticIndexConfig.active.is_(True))
+        )
+        rejected = session.get(SemanticIndexConfig, incomparable_failure.value.config_hash)
+    assert still_active is not None
+    assert still_active.id == incumbent.config_hash
+    assert still_active.status == "ready"
+    assert rejected is not None
+    assert rejected.active is False
+    assert rejected.status == "rejected"
+
+    candidate_payload = held_out_payload(candidate_metrics)
+    monkeypatch.setattr(
+        search_index_service,
+        "_held_out_feedback_evaluation",
+        lambda *_args, **_kwargs: candidate_payload,
+    )
+    with pytest.raises(SemanticIndexAcceptanceError) as failure:
+        build_semantic_index(
+            layout,
+            engine,
+            embedder=FingerprintedFixtureEmbedder("sha256:upgrade-candidate"),
+            rebuild_windows=False,
+            batch_size=4,
+        )
+
+    comparison = failure.value.evaluation["active_incumbent_comparison"]
+    assert comparison["status"] == "failed_regression"
+    assert comparison["required_for_activation"] is True
+    assert comparison["passed"] is False
+    assert comparison["demonstrated_improvement_required"] is True
+    assert comparison["demonstrated_improvement"] is False
+    assert comparison["metrics"]["recall_at_k"]["delta"] == pytest.approx(-0.03)
+    assert comparison["metrics"]["recall_at_k"]["regression_exceeds_tolerance"] is True
+    with Session(engine) as session:
+        still_active = session.scalar(
+            select(SemanticIndexConfig).where(SemanticIndexConfig.active.is_(True))
+        )
+        rejected = session.get(SemanticIndexConfig, failure.value.config_hash)
+    assert still_active is not None
+    assert still_active.id == incumbent.config_hash
+    assert still_active.status == "ready"
+    assert rejected is not None
+    assert rejected.active is False
+    assert rejected.status == "rejected"
+
+
+def test_failed_direct_conflict_calibration_blocks_activation_and_preserves_incumbent(
+    stage3_catalog: tuple[ArchiveLayout, Engine],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    layout, engine = stage3_catalog
+    incumbent_metrics: dict[str, int | float] = {
+        "query_count": 5,
+        "k": 10,
+        "recall_at_k": 0.70,
+        "mrr": 0.60,
+        "ndcg_at_k": 0.58,
+    }
+    candidate_metrics = {
+        **incumbent_metrics,
+        "recall_at_k": 0.73,
+        "mrr": 0.63,
+        "ndcg_at_k": 0.61,
+    }
+    held_out = {
+        "benchmark_kind": "held_out_user_feedback",
+        "status": "passed",
+        "passed": True,
+        "used_for_activation": True,
+        "ranking_pipeline": "runtime-search-v2",
+        "reranker": asdict(DEFAULT_RERANKER_SPEC),
+        "feedback_revision": {
+            "version": "held-out-feedback-revision-v1",
+            "sha256": "c" * 64,
+            "row_count": 50,
+        },
+        "feedback_revision_stable_during_evaluation": True,
+        "evidence_truncated": False,
+    }
+    held_out_evaluations = iter(
+        (
+            {**held_out, "metrics": incumbent_metrics},
+            {**held_out, "metrics": candidate_metrics},
+        )
+    )
+    calibration_base = search_index_service._direct_conflict_calibration_base()
+    passing_calibration = {
+        **calibration_base,
+        "status": "passed",
+        "passed": True,
+        "feedback_revision_stable_during_evaluation": True,
+    }
+    monkeypatch.setattr(
+        search_index_service,
+        "_held_out_feedback_evaluation",
+        lambda *_args, **_kwargs: next(held_out_evaluations),
+    )
+    monkeypatch.setattr(
+        search_index_service,
+        "_direct_conflict_development_evaluation",
+        lambda *_args, **_kwargs: passing_calibration,
+    )
+    incumbent = build_semantic_index(
+        layout,
+        engine,
+        embedder=FingerprintedFixtureEmbedder("sha256:direct-gate-incumbent"),
+        batch_size=4,
+    )
+
+    failed_calibration = {
+        **calibration_base,
+        "status": "failed_grouped_cross_validation",
+        "passed": False,
+        "feedback_revision_stable_during_evaluation": True,
+    }
+    monkeypatch.setattr(
+        search_index_service,
+        "_direct_conflict_development_evaluation",
+        lambda *_args, **_kwargs: failed_calibration,
+    )
+    with pytest.raises(SemanticIndexAcceptanceError) as failure:
+        build_semantic_index(
+            layout,
+            engine,
+            embedder=FingerprintedFixtureEmbedder("sha256:direct-gate-candidate"),
+            rebuild_windows=False,
+            batch_size=4,
+        )
+
+    evaluation = failure.value.evaluation
+    assert evaluation["automatic_known_item"]["passed"] is True
+    assert evaluation["held_out_feedback"]["passed"] is True
+    assert evaluation["active_incumbent_comparison"]["passed"] is True
+    assert evaluation["direct_conflict_development_calibration"]["passed"] is False
+    assert evaluation["passed"] is False
+    assert evaluation["production_acceptance_passed"] is False
+    with Session(engine) as session:
+        still_active = session.get(SemanticIndexConfig, incumbent.config_hash)
+        rejected = session.get(SemanticIndexConfig, failure.value.config_hash)
+    assert still_active is not None
+    assert still_active.active is True
+    assert still_active.status == "ready"
+    assert rejected is not None
+    assert rejected.active is False
+    assert rejected.status == "rejected"
+
+
+def test_malformed_active_incumbent_evidence_blocks_activation(
+    stage3_catalog: tuple[ArchiveLayout, Engine],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    layout, engine = stage3_catalog
+    incumbent = build_semantic_index(
+        layout,
+        engine,
+        embedder=FingerprintedFixtureEmbedder("sha256:malformed-incumbent"),
+        batch_size=4,
+    )
+    with Session(engine) as session, session.begin():
+        active = session.get(SemanticIndexConfig, incumbent.config_hash)
+        assert active is not None
+        semantic_evaluation = active.audit_json["semantic_ir_evaluation"]
+        candidate_held_out = semantic_evaluation["held_out_feedback"]
+        active.audit_json = {"semantic_ir_evaluation": semantic_evaluation}
+
+    monkeypatch.setattr(
+        search_index_service,
+        "_held_out_feedback_evaluation",
+        lambda *_args, **_kwargs: candidate_held_out,
+    )
+    with pytest.raises(SemanticIndexAcceptanceError) as failure:
+        build_semantic_index(
+            layout,
+            engine,
+            embedder=FingerprintedFixtureEmbedder("sha256:malformed-candidate"),
+            rebuild_windows=False,
+            batch_size=4,
+        )
+
+    comparison = failure.value.evaluation["active_incumbent_comparison"]
+    assert comparison["status"] == "failed_incomparable_incumbent"
+    assert comparison["required_for_activation"] is True
+    assert comparison["passed"] is False
+    assert comparison["reason_codes"] == ["accepted_evidence_missing"]
+    with Session(engine) as session:
+        still_active = session.scalar(
+            select(SemanticIndexConfig).where(SemanticIndexConfig.active.is_(True))
+        )
+        rejected = session.get(SemanticIndexConfig, failure.value.config_hash)
+    assert still_active is not None
+    assert still_active.id == incumbent.config_hash
+    assert still_active.status == "ready"
+    assert rejected is not None
+    assert rejected.active is False
+    assert rejected.status == "rejected"
+
+
 def test_rejected_candidate_preserves_ready_index_and_resumes_without_reembedding(
     stage3_catalog: tuple[ArchiveLayout, Engine],
 ) -> None:
@@ -1275,6 +2013,175 @@ def test_rejected_candidate_preserves_ready_index_and_resumes_without_reembeddin
         assert rejected is not None and rejected.status == "rejected"
 
 
+def test_manual_activation_preserves_failed_evaluation_and_uses_cross_encoder_for_argument(
+    stage3_catalog: tuple[ArchiveLayout, Engine],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    layout, engine = stage3_catalog
+    incumbent = build_semantic_index(
+        layout,
+        engine,
+        embedder=FingerprintedFixtureEmbedder("sha256:manual-incumbent"),
+        batch_size=4,
+    )
+    rejected_embedder = BrokenQueryFixtureEmbedder("sha256:manual-rejected")
+    with pytest.raises(SemanticIndexAcceptanceError) as rejected_failure:
+        build_semantic_index(
+            layout,
+            engine,
+            embedder=rejected_embedder,
+            rebuild_windows=False,
+            batch_size=4,
+        )
+    rejected_id = rejected_failure.value.config_hash
+    failed_evaluation_bytes = json.dumps(
+        rejected_failure.value.evaluation,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+
+    with pytest.raises(SemanticIndexManualActivationError, match="exact 64-character"):
+        activate_rejected_semantic_candidate(
+            layout,
+            engine,
+            config_hash="not-an-exact-config-id",
+            acknowledge_failed_quality_gate=True,
+        )
+    with pytest.raises(
+        SemanticIndexManualActivationError,
+        match="--acknowledge-failed-quality-gate",
+    ):
+        activate_rejected_semantic_candidate(
+            layout,
+            engine,
+            config_hash=rejected_id,
+            acknowledge_failed_quality_gate=False,
+        )
+
+    blocking_job_id = "manual-activation-blocking-job"
+    with Session(engine) as session, session.begin():
+        session.add(
+            Job(
+                id=blocking_job_id,
+                kind="fixture",
+                status="running",
+                stage="Synthetic active job",
+                checkpoint_json={},
+                counters_json={},
+            )
+        )
+    with pytest.raises(SemanticIndexManualActivationError, match="every queued or running job"):
+        activate_rejected_semantic_candidate(
+            layout,
+            engine,
+            config_hash=rejected_id,
+            acknowledge_failed_quality_gate=True,
+        )
+    with Session(engine) as session, session.begin():
+        blocking = session.get(Job, blocking_job_id)
+        assert blocking is not None
+        blocking.status = "failed"
+
+    monkeypatch.setitem(
+        search_index_service.MODEL_SPECS,
+        FIXTURE_SPEC.alias,
+        FIXTURE_SPEC,
+    )
+    monkeypatch.setattr(
+        search_index_service,
+        "default_text_embedder",
+        lambda _layout, _spec, **_kwargs: FingerprintedFixtureEmbedder("sha256:manual-rejected"),
+    )
+    summary = activate_rejected_semantic_candidate(
+        layout,
+        engine,
+        config_hash=rejected_id,
+        acknowledge_failed_quality_gate=True,
+    )
+
+    assert summary.config_hash == rejected_id
+    assert summary.previous_active_config_id == incumbent.config_hash
+    assert summary.window_count == incumbent.window_count
+    with Session(engine) as session:
+        activated = session.get(SemanticIndexConfig, rejected_id)
+        prior = session.get(SemanticIndexConfig, incumbent.config_hash)
+        activation_job = session.get(Job, summary.activation_job_id)
+        source_job = session.get(
+            Job,
+            activated.audit_json["manual_activation_override"]["source_build_job_id"]
+            if activated is not None
+            else "",
+        )
+        assert activated is not None
+        assert prior is not None
+        assert activation_job is not None
+        assert source_job is not None
+        assert activated.active is True
+        assert activated.status == "ready"
+        assert prior.active is False
+        assert (
+            json.dumps(
+                activated.audit_json["semantic_ir_evaluation"],
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+            == failed_evaluation_bytes
+        )
+        assert activated.audit_json.get("accepted_semantic_ir_evaluation") is None
+        assert activated.audit_json["recommended_model"] == "bge-base-en-v1.5"
+        assert activated.audit_json["model_selection"] == "explicit_manual_override"
+        assert (
+            activated.audit_json["language_audit"]["selection_policy"]
+            == SEMANTIC_MODEL_SELECTION_POLICY
+        )
+        override = activated.audit_json["manual_activation_override"]
+        assert override["candidate_config_id"] == rejected_id
+        assert override["previous_active_config_id"] == incumbent.config_hash
+        assert override["acknowledged_failed_quality_gate"] is True
+        assert override["failed_evaluation_preserved"] is True
+        assert override["source"] == "cli_only"
+        assert (
+            override["validation"]["lance_spot_check"]["ids_memberships_vectors_metadata_matched"]
+            is True
+        )
+        assert override["conflict_aggregate_invalidation"]["status"] == "completed"
+        assert search_service.direct_conflict_feedback_revision_required(activated) is False
+        assert activation_job.status == "completed"
+        assert activation_job.stage == "Semantic index manually activated"
+        assert activation_job.counters_json["acceptance_passed"] is False
+        assert activation_job.counters_json["production_acceptance_passed"] is False
+        assert source_job.status == "failed"
+        assert (
+            session.scalar(
+                select(func.count(SearchWindow.id)).where(
+                    SearchWindow.embedding_config_hash == rejected_id
+                )
+            )
+            == summary.window_count
+        )
+
+    search_page = semantic_search(
+        layout,
+        engine,
+        "argument",
+        limit=10,
+        embedder_factory=lambda _spec: FingerprintedFixtureEmbedder("sha256:manual-rejected"),
+        reranker_factory=fixture_reranker_factory,
+    )
+
+    assert search_page.items
+    assert search_page.index_config is not None
+    fallback = search_page.index_config["direct_conflict_ranker"]
+    assert fallback["status"] == "normal_cross_encoder_fallback"
+    assert fallback["specialized_ranker_used"] is False
+    assert fallback["reason"] == ("manual_override_without_accepted_direct_conflict_calibration")
+    assert all(item["score_kind"] == DEFAULT_RERANKER_SPEC.score_kind for item in search_page.items)
+    assert all(
+        item["ranking_provenance"]["literal_direct_conflict"] == fallback
+        for item in search_page.items
+    )
+
+
 def test_language_audit_detects_latin_script_non_english_text(
     stage3_catalog: tuple[ArchiveLayout, Engine],
 ) -> None:
@@ -1291,7 +2198,9 @@ def test_language_audit_detects_latin_script_non_english_text(
 
     assert audit["language_counts"]["SPANISH"] > 0
     assert audit["non_english_ratio"] == 1.0
-    assert audit["recommended_model"] == "multilingual-e5-small"
+    assert audit["recommended_model"] == AUTO_EMBEDDING_MODEL_ALIAS
+    assert audit["threshold_used_for_selection"] is False
+    assert audit["selection_policy"] == SEMANTIC_MODEL_SELECTION_POLICY
 
 
 def test_auto_model_selection_runs_on_reused_windows(
@@ -1318,22 +2227,21 @@ def test_auto_model_selection_runs_on_reused_windows(
         embedder_factory=factory,
         model_alias="auto",
         rebuild_windows=False,
-        batch_size=4,
+        batch_size=128,
     )
 
-    assert selected == ["multilingual-e5-small"]
-    assert summary.model_name == "intfloat/multilingual-e5-small"
+    assert selected == ["bge-base-en-v1.5"]
+    assert summary.model_name == "BAAI/bge-base-en-v1.5"
     with Session(engine) as session:
         config = session.get(SemanticIndexConfig, summary.config_hash)
         assert config is not None
-        assert config.backend == "lancedb-transformers"
-        assert "transformers-" in config.backend_version
-        assert "torch-" in config.backend_version
-        assert config.audit_json["model_selection"] == "language_audit"
-        assert config.audit_json["language_audit"]["recommended_model"] == ("multilingual-e5-small")
+        assert config.backend == "lancedb-fastembed"
+        assert "fastembed-" in config.backend_version
+        assert config.audit_json["model_selection"] == "automatic_default"
+        assert config.audit_json["language_audit"]["recommended_model"] == "bge-base-en-v1.5"
 
 
-def test_default_embedding_backend_uses_transformers_only_for_multilingual_small(
+def test_default_embedding_backend_uses_declared_provider(
     archive_layout: ArchiveLayout, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     selected: list[tuple[str, str]] = []
@@ -1353,6 +2261,10 @@ def test_default_embedding_backend_uses_transformers_only_for_multilingual_small
         archive_layout,
         search_index_service.embedding_model_spec("multilingual-e5-small"),
     )
+    modernbert = search_index_service.default_text_embedder(
+        archive_layout,
+        search_index_service.embedding_model_spec("gte-modernbert-base"),
+    )
     english = search_index_service.default_text_embedder(
         archive_layout,
         search_index_service.embedding_model_spec("bge-small-en-v1.5"),
@@ -1360,8 +2272,10 @@ def test_default_embedding_backend_uses_transformers_only_for_multilingual_small
 
     assert multilingual.spec.model_name == "intfloat/multilingual-e5-small"
     assert multilingual.spec.model_revision == "fd1525a9fd15316a2d503bf26ab031a61d056e98"
+    assert modernbert.spec.model_name == "Alibaba-NLP/gte-modernbert-base"
     assert english.spec.model_name == "BAAI/bge-small-en-v1.5"
     assert selected == [
+        ("transformers", str(archive_layout.models / "transformers")),
         ("transformers", str(archive_layout.models / "transformers")),
         ("fastembed", str(archive_layout.models / "fastembed")),
     ]
@@ -1377,20 +2291,23 @@ def test_artifact_fingerprint_versions_index_and_rejects_query_mismatch(
         embedder=FingerprintedFixtureEmbedder("sha256:artifact-a"),
         batch_size=4,
     )
-    second = build_semantic_index(
-        layout,
-        engine,
-        embedder=FingerprintedFixtureEmbedder("sha256:artifact-b"),
-        rebuild_windows=False,
-        batch_size=4,
-    )
+    with pytest.raises(SemanticIndexAcceptanceError) as second:
+        build_semantic_index(
+            layout,
+            engine,
+            embedder=FingerprintedFixtureEmbedder("sha256:artifact-b"),
+            rebuild_windows=False,
+            batch_size=4,
+        )
 
-    assert second.config_hash != first.config_hash
-    assert second.vector_table != first.vector_table
+    assert second.value.config_hash != first.config_hash
     with Session(engine) as session:
-        active = session.get(SemanticIndexConfig, second.config_hash)
-        assert active is not None
-        assert active.audit_json["artifact_fingerprint"] == "sha256:artifact-b"
+        active = session.get(SemanticIndexConfig, first.config_hash)
+        rejected = session.get(SemanticIndexConfig, second.value.config_hash)
+        assert active is not None and active.active is True
+        assert rejected is not None and rejected.active is False
+        assert rejected.vector_table != first.vector_table
+        assert rejected.audit_json["artifact_fingerprint"] == "sha256:artifact-b"
 
     with pytest.raises(SearchUnavailableError, match="artifact no longer matches"):
         semantic_search(
@@ -1398,7 +2315,7 @@ def test_artifact_fingerprint_versions_index_and_rejects_query_mismatch(
             engine,
             "fixture",
             limit=10,
-            embedder_factory=lambda _spec: FingerprintedFixtureEmbedder("sha256:artifact-a"),
+            embedder_factory=lambda _spec: FingerprintedFixtureEmbedder("sha256:artifact-b"),
         )
 
 

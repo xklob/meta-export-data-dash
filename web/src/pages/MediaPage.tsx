@@ -25,6 +25,7 @@ import {
 import { type CSSProperties, type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { AttachmentPreview } from '../components/AttachmentPreview'
 import { BoundedResultsHint } from '../components/BoundedResultsHint'
+import { StarButton } from '../components/StarButton'
 import { EmptyState, ErrorState, MetricCard, PageHeading, PageLoading, StatusBadge } from '../components/ui'
 import { api, type MediaQuery } from '../lib/api'
 import type { MediaItem, MediaView, SortDirection } from '../lib/contracts'
@@ -117,6 +118,21 @@ function AvailabilityLabels({ item }: { item: MediaItem }) {
   )
 }
 
+function MediaStarButton({ item, view }: { item: MediaItem; view: MediaView }) {
+  const target = item.star_target ?? (
+    view === 'unique' && item.blob_sha256
+      ? { target_type: 'blob' as const, target_id: item.blob_sha256 }
+      : { target_type: 'attachment' as const, target_id: item.id }
+  )
+  return (
+    <StarButton
+      target={target}
+      star={item.star}
+      label={`${view === 'unique' && target.target_type === 'blob' ? 'unique file' : 'attachment'} ${item.filename || sentenceCase(item.type || item.kind)}`}
+    />
+  )
+}
+
 function JumpLink({ item, compact = false }: { item: MediaItem; compact?: boolean }) {
   const className = compact ? 'media-jump media-jump--compact' : 'button button--secondary media-jump'
   if (item.jump?.conversation_id) {
@@ -176,6 +192,7 @@ function MediaCard({
   seekMs,
   position,
   setSize,
+  view,
 }: {
   item: MediaItem
   timezone: string
@@ -184,6 +201,7 @@ function MediaCard({
   seekMs?: number
   position: number
   setSize: number
+  view: MediaView
 }) {
   return (
     <article
@@ -196,7 +214,10 @@ function MediaCard({
     >
       <div className="media-card__preview"><AttachmentPreview item={item} seekMs={focused ? seekMs : undefined} /></div>
       <div className="media-card__body">
-        <AvailabilityLabels item={item} />
+        <div className="media-card__headline-actions">
+          <AvailabilityLabels item={item} />
+          <MediaStarButton item={item} view={view} />
+        </div>
         <h3 title={item.filename ?? undefined}>{item.filename || `${sentenceCase(item.type)} attachment`}</h3>
         <p>{item.conversation?.title || item.activity?.title || sentenceCase(item.activity?.category) || 'Not linked to a source record'}</p>
         <dl>
@@ -226,6 +247,7 @@ function VirtualMediaGrid({
   onOccurrences,
   focusedOccurrenceId,
   seekMs,
+  view,
 }: {
   items: MediaItem[]
   total: number
@@ -233,6 +255,7 @@ function VirtualMediaGrid({
   onOccurrences: (item: MediaItem) => void
   focusedOccurrenceId?: string
   seekMs?: number
+  view: MediaView
 }) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(1100)
@@ -274,7 +297,7 @@ function VirtualMediaGrid({
         <div className="media-grid-canvas" style={{ height: virtualizer.getTotalSize() }}>
           {renderedRows.map((row) => (
             <div className="media-grid-row" key={row.key} data-index={row.index} ref={virtualizer.measureElement} style={{ transform: `translateY(${row.start}px)`, gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
-              {items.slice(row.index * columns, row.index * columns + columns).map((item, index) => <MediaCard key={item.view_key} item={item} timezone={timezone} onOccurrences={onOccurrences} focused={item.id === focusedOccurrenceId} seekMs={seekMs} position={row.index * columns + index + 1} setSize={Math.max(total, items.length)} />)}
+              {items.slice(row.index * columns, row.index * columns + columns).map((item, index) => <MediaCard key={item.view_key} item={item} timezone={timezone} onOccurrences={onOccurrences} focused={item.id === focusedOccurrenceId} seekMs={seekMs} position={row.index * columns + index + 1} setSize={Math.max(total, items.length)} view={view} />)}
             </div>
           ))}
         </div>
@@ -283,7 +306,7 @@ function VirtualMediaGrid({
   )
 }
 
-function VirtualMediaTable({ items, total, timezone, onOccurrences, focusedOccurrenceId, seekMs }: { items: MediaItem[]; total: number; timezone: string; onOccurrences: (item: MediaItem) => void; focusedOccurrenceId?: string; seekMs?: number }) {
+function VirtualMediaTable({ items, total, timezone, onOccurrences, focusedOccurrenceId, seekMs, view }: { items: MediaItem[]; total: number; timezone: string; onOccurrences: (item: MediaItem) => void; focusedOccurrenceId?: string; seekMs?: number; view: MediaView }) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const virtualizer = useVirtualizer({
     count: items.length,
@@ -315,7 +338,7 @@ function VirtualMediaTable({ items, total, timezone, onOccurrences, focusedOccur
               const item = items[row.index]!
               return (
                 <div id={`media-occurrence-${item.id}`} className={`media-table__row ${item.id === focusedOccurrenceId ? 'media-table__row--focused' : ''}`} role="row" aria-rowindex={row.index + 2} key={item.view_key} data-index={row.index} ref={virtualizer.measureElement} tabIndex={item.id === focusedOccurrenceId ? -1 : undefined} style={{ transform: `translateY(${row.start}px)` }}>
-                  <div className="media-table__file" role="cell"><div><AttachmentPreview item={item} compact seekMs={item.id === focusedOccurrenceId ? seekMs : undefined} /></div><span><strong>{item.filename || 'Unnamed attachment'}</strong><JumpLink item={item} compact /></span></div>
+                  <div className="media-table__file" role="cell"><div><AttachmentPreview item={item} compact seekMs={item.id === focusedOccurrenceId ? seekMs : undefined} /></div><span><strong>{item.filename || 'Unnamed attachment'}</strong><JumpLink item={item} compact /></span><MediaStarButton item={item} view={view} /></div>
                   <div role="cell"><span className="compact-label">Type</span>{sentenceCase(item.type)}</div>
                   <div role="cell"><span className="compact-label">Source context</span>{item.conversation?.title || item.activity?.title || sentenceCase(item.activity?.category) || (item.provenance ? 'Unlinked' : 'No retained source')}</div>
                   <div role="cell"><span className="compact-label">Date</span>{formatDateMs(item.timestamp_ms, timezone)}</div>
@@ -388,7 +411,7 @@ function OccurrenceDialog({ item, timezone, onClose }: { item: MediaItem; timezo
       <section ref={dialogRef} className="occurrence-dialog" role="dialog" aria-modal="true" aria-labelledby="occurrence-dialog-title" aria-describedby="occurrence-dialog-description">
         <header><div><p className="eyebrow">Unique file</p><h2 id="occurrence-dialog-title">Every occurrence</h2><p id="occurrence-dialog-description">{item.filename || item.blob_sha256}</p></div><button ref={closeRef} className="icon-button" type="button" aria-label="Close occurrences" onClick={() => onCloseRef.current()}><X size={19} /></button></header>
         {occurrences.isLoading ? <div className="inline-loading" role="status">Loading occurrences…</div> : occurrences.isError ? <ErrorState error={occurrences.error} onRetry={() => occurrences.refetch()} /> : (
-          <div className="occurrence-list"><p>{formatCount(occurrences.data?.pages[0]?.page.total)} retained occurrences</p><ul>{entries.map((entry) => <li key={entry.id}><div><strong>{entry.conversation?.title || entry.activity?.title || sentenceCase(entry.activity?.category) || (entry.provenance ? 'Unlinked file' : 'No retained source')}</strong><span>{formatDateMs(entry.timestamp_ms, timezone)} · {sentenceCase(entry.source_category)}</span></div><JumpLink item={entry} /></li>)}</ul>{occurrences.hasNextPage ? <button className="button button--secondary" type="button" disabled={occurrences.isFetchingNextPage} onClick={() => occurrences.fetchNextPage()}>Load more occurrences</button> : null}</div>
+          <div className="occurrence-list"><p>{formatCount(occurrences.data?.pages[0]?.page.total)} retained occurrences</p><ul>{entries.map((entry) => <li key={entry.id}><div><strong>{entry.conversation?.title || entry.activity?.title || sentenceCase(entry.activity?.category) || (entry.provenance ? 'Unlinked file' : 'No retained source')}</strong><span>{formatDateMs(entry.timestamp_ms, timezone)} · {sentenceCase(entry.source_category)}</span></div><div className="occurrence-list__actions"><MediaStarButton item={entry} view="occurrences" /><JumpLink item={entry} /></div></li>)}</ul>{occurrences.hasNextPage ? <button className="button button--secondary" type="button" disabled={occurrences.isFetchingNextPage} onClick={() => occurrences.fetchNextPage()}>Load more occurrences</button> : null}</div>
         )}
       </section>
     </div>
@@ -524,7 +547,7 @@ export function MediaPage() {
             <p><strong>Why these files have no source jump</strong><span>They were present in the export but no imported message or activity referenced them. Their cards include safe archive-relative source and library paths you can copy for filesystem browsing.</span></p>
           </aside>
         ) : null}
-        {items.length === 0 ? <EmptyState title="No media matches" description="Try clearing type, availability, conversation, date, or size filters." action={<button className="button button--secondary" type="button" onClick={() => { setDraft(baseFilters); setApplied(baseFilters); setVisibility('resolved-first') }}>Reset filters</button>} /> : display === 'grid' ? <VirtualMediaGrid items={items} total={total} timezone={timezone} onOccurrences={setOccurrenceItem} focusedOccurrenceId={occurrence} seekMs={t} /> : <VirtualMediaTable items={items} total={total} timezone={timezone} onOccurrences={setOccurrenceItem} focusedOccurrenceId={occurrence} seekMs={t} />}
+        {items.length === 0 ? <EmptyState title="No media matches" description="Try clearing type, availability, conversation, date, or size filters." action={<button className="button button--secondary" type="button" onClick={() => { setDraft(baseFilters); setApplied(baseFilters); setVisibility('resolved-first') }}>Reset filters</button>} /> : display === 'grid' ? <VirtualMediaGrid items={items} total={total} timezone={timezone} onOccurrences={setOccurrenceItem} focusedOccurrenceId={occurrence} seekMs={t} view={applied.view} /> : <VirtualMediaTable items={items} total={total} timezone={timezone} onOccurrences={setOccurrenceItem} focusedOccurrenceId={occurrence} seekMs={t} view={applied.view} />}
         {items.length > 0 ? <div className="load-more-row"><span>{formatCount(items.length)} of {formatCount(total)} {applied.view === 'unique' ? 'unique files' : 'occurrences'} loaded</span>{media.hasNextPage ? <button className="button button--secondary" type="button" disabled={media.isFetchingNextPage} onClick={() => media.fetchNextPage()}>{media.isFetchingNextPage ? 'Loading…' : 'Load more media'}</button> : <span>End of results</span>}</div> : null}
       </section>
       <p className="reader-privacy-note"><ImageOff size={14} /> Missing and external files stay visible as metadata placeholders. Documents are never embedded as active web content.</p>

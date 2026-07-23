@@ -34,6 +34,68 @@
   --shadow-md: 0 12px 36px rgba(14, 32, 32, 0.1);
 }
 
+.star-button {
+  display: inline-flex;
+  min-width: 38px;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 0.38rem;
+  flex: 0 0 auto;
+  padding: 0.45rem 0.65rem;
+  color: #6d5a37;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 0.55rem;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.67rem;
+  font-weight: 700;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+
+.star-button:hover:not(:disabled) {
+  color: var(--amber);
+  background: var(--amber-soft);
+  border-color: #d9b975;
+}
+
+.star-button:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.star-button:focus-visible {
+  outline: 3px solid rgba(139, 80, 15, 0.24);
+  outline-offset: 2px;
+}
+
+.star-button--active {
+  color: var(--amber);
+  background: var(--amber-soft);
+  border-color: #d9b975;
+}
+
+.star-button--compact {
+  width: 38px;
+  padding: 0;
+}
+
+.star-button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+@media (max-width: 680px) {
+  .star-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .star-button--compact {
+    width: 44px;
+  }
+}
+
 /* Stage 4: activity, people, events, timeline, and analytics */
 .coverage-notice {
   display: flex;
@@ -175,8 +237,14 @@
 
 .activity-table tr {
   display: grid;
-  grid-template-columns: minmax(260px, 2.1fr) minmax(120px, 0.9fr) minmax(150px, 1fr) minmax(120px, 0.9fr) minmax(145px, 1fr) 70px minmax(150px, 1.1fr) 74px;
+  grid-template-columns: minmax(260px, 2.1fr) minmax(120px, 0.9fr) minmax(150px, 1fr) minmax(120px, 0.9fr) minmax(145px, 1fr) 70px minmax(150px, 1.1fr) 116px;
   width: 100%;
+}
+
+.activity-table__jump {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
 }
 
 .activity-table tbody tr {
@@ -292,6 +360,7 @@
 .timeline-entry__body time { color: var(--muted); font-size: 0.6rem; white-space: nowrap; }
 .timeline-entry__body > p { color: #435456; font-size: 0.69rem; line-height: 1.55; white-space: pre-wrap; }
 .timeline-entry__body footer { justify-content: space-between; color: var(--muted); font-size: 0.59rem; }
+.timeline-entry__actions { display: inline-flex; align-items: center; gap: 0.4rem; }
 
 .people-grid {
   display: grid;
@@ -334,6 +403,7 @@
 .person-card__header > div { min-width: 0; }
 .person-card__header h2 { overflow: hidden; color: #26383a; font-size: 0.82rem; text-overflow: ellipsis; white-space: nowrap; }
 .person-card__header p { margin-top: 0.15rem; color: var(--muted); font-size: 0.58rem; }
+.person-card__actions { display: inline-flex; align-items: center; gap: 0.4rem; }
 
 .person-card__metrics {
   display: grid;
@@ -379,12 +449,13 @@
 .event-card__date { display: flex; align-items: center; gap: 0.5rem; padding: 0.85rem; color: var(--teal-dark); background: var(--teal-soft); font-size: 0.63rem; font-weight: 680; }
 .event-card__body { display: grid; min-width: 0; gap: 0.55rem; padding: 0.8rem 0.9rem; }
 .event-card__body header, .event-card__body footer { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.event-card__actions { display: inline-flex; align-items: center; gap: 0.4rem; }
 .event-card__body h3 { color: #293a3c; font-size: 0.78rem; }
 .event-card__body > p { color: #536265; font-size: 0.65rem; line-height: 1.5; }
 .event-card__body footer { color: var(--muted); font-size: 0.57rem; }
 
 .support-grid { display: grid; gap: 0.65rem; }
-.support-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0.8rem; padding: 0.8rem; background: var(--surface-subtle); border: 1px solid var(--border); border-radius: 0.7rem; }
+.support-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 0.8rem; padding: 0.8rem; background: var(--surface-subtle); border: 1px solid var(--border); border-radius: 0.7rem; }
 .support-card__icon { display: grid; width: 38px; height: 38px; place-items: center; color: var(--teal-dark); background: var(--teal-soft); border-radius: 0.6rem; }
 .support-card > div { display: grid; min-width: 0; gap: 0.18rem; }
 .support-card h3 { overflow: hidden; color: #293a3c; font-size: 0.75rem; text-overflow: ellipsis; white-space: nowrap; }
@@ -455,7 +526,7 @@
   .timeline-entry__body footer { order: -1; }
   .timeline-entry__body time { white-space: normal; }
   .person-card__header { grid-template-columns: auto minmax(0, 1fr); }
-  .person-card__header .status-badge { grid-column: 1 / -1; }
+  .person-card__actions { grid-column: 1 / -1; justify-content: space-between; }
   .person-card__metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 0.55rem; }
   .person-card__metrics > div:nth-child(2) { border-right: 0; }
   .nlp-availability > div:last-child { grid-template-columns: 1fr; }
@@ -3344,6 +3415,18 @@ code {
   gap: 0.17rem;
 }
 
+.conversation-table__identity-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.conversation-table__identity-heading > a {
+  min-width: 0;
+  flex: 1;
+}
+
 .conversation-table__identity a {
   overflow: hidden;
   color: #26393a;
@@ -3870,7 +3953,14 @@ code {
   list-style: none;
 }
 
-.thread-search-results li button {
+.thread-search-results li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.thread-search-results .thread-search-result__jump {
   display: grid;
   width: 100%;
   gap: 0.22rem;
@@ -3883,7 +3973,7 @@ code {
   cursor: pointer;
 }
 
-.thread-search-results li button:hover {
+.thread-search-results .thread-search-result__jump:hover {
   border-color: #a9c6c0;
 }
 
@@ -4214,7 +4304,7 @@ code {
   box-shadow: 0 0 0 3px rgba(45, 143, 133, 0.18);
 }
 
-.message-attachment > div:last-child {
+.message-attachment__meta {
   display: grid;
   min-width: 0;
   gap: 0.12rem;
@@ -4531,6 +4621,18 @@ code {
   padding: 0.65rem;
 }
 
+.media-card__headline-actions {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.media-card__headline-actions .media-badges {
+  flex: 1;
+}
+
 .media-badges {
   display: flex;
   min-width: 0;
@@ -4760,7 +4862,7 @@ code {
 
 .media-table__file {
   display: grid;
-  grid-template-columns: 58px minmax(0, 1fr);
+  grid-template-columns: 58px minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.5rem;
 }
@@ -4907,6 +5009,12 @@ code {
   display: grid;
   min-width: 0;
   gap: 0.12rem;
+}
+
+.occurrence-list .occurrence-list__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
 }
 
 .occurrence-list li strong,

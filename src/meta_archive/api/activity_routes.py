@@ -55,6 +55,7 @@ from meta_archive.models import (
 )
 from meta_archive.services.jumps import activity_jump as _activity_jump
 from meta_archive.services.search import _fts_expression
+from meta_archive.services.stars import attach_star_states
 from meta_archive.services.text import normalize_classifier_token, normalize_text
 
 activity_router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_session)])
@@ -587,6 +588,11 @@ def _activity_page(
             )
             for row, chunk, path in page_rows
         ]
+        attach_star_states(
+            session,
+            items,
+            lambda item: ("activity", str(item["id"])),
+        )
         coverage_components: list[dict[str, Any]] = []
         if view is None:
             coverage = coverage_payload(
@@ -741,14 +747,13 @@ def activity_detail(request: Request, activity_id: str) -> dict[str, Any]:
                 .order_by(ActivityRecord.timestamp_ms, ActivityRecord.id)
             )
         )
-    return {
-        "record": _activity_payload(
+        record_payload = _activity_payload(
             row,
             chunk_key=chunk,
             relative_path=path,
             attachment_count=len(attachments),
-        ),
-        "attachments": [
+        )
+        attachment_payloads = [
             {
                 "id": attachment.id,
                 "kind": attachment.kind,
@@ -763,8 +768,8 @@ def activity_detail(request: Request, activity_id: str) -> dict[str, Any]:
                 ),
             }
             for attachment in attachments
-        ],
-        "children": [
+        ]
+        child_payloads = [
             {
                 "id": child.id,
                 "subtype": child.subtype,
@@ -773,7 +778,21 @@ def activity_detail(request: Request, activity_id: str) -> dict[str, Any]:
                 "jump": _activity_jump(child.id),
             }
             for child in children
-        ],
+        ]
+        attach_star_states(
+            session,
+            [record_payload, *child_payloads],
+            lambda item: ("activity", str(item["id"])),
+        )
+        attach_star_states(
+            session,
+            attachment_payloads,
+            lambda item: ("attachment", str(item["id"])),
+        )
+    return {
+        "record": record_payload,
+        "attachments": attachment_payloads,
+        "children": child_payloads,
     }
 
 
@@ -1229,9 +1248,17 @@ def timeline(
             ],
             direction=direction,
         )[: limit + 1]
+        page_rows = rows[:limit]
+        items = [_timeline_payload(row) for row in page_rows]
+        attach_star_states(
+            session,
+            items,
+            lambda item: (
+                "message" if item["entity_type"] == "message" else "activity",
+                str(item["entity_id"]),
+            ),
+        )
         aggregate_memo.require_current()
-    page_rows = rows[:limit]
-    items = [_timeline_payload(row) for row in page_rows]
     next_cursor = None
     if len(rows) > limit and page_rows:
         last = page_rows[-1]
@@ -1383,14 +1410,22 @@ def on_this_day(
         )
         total = session.scalar(select(func.count()).select_from(entries).where(range_filter)) or 0
         rows = list(session.execute(statement))
-    page_rows = rows[:limit]
-    items = []
-    for row in page_rows:
-        local = datetime.fromtimestamp(row.timestamp_ms / 1000, zone)
-        item = _timeline_payload(row)
-        item["local_date"] = local.date().isoformat()
-        item["year"] = local.year
-        items.append(item)
+        page_rows = rows[:limit]
+        items = []
+        for row in page_rows:
+            local = datetime.fromtimestamp(row.timestamp_ms / 1000, zone)
+            item = _timeline_payload(row)
+            item["local_date"] = local.date().isoformat()
+            item["year"] = local.year
+            items.append(item)
+        attach_star_states(
+            session,
+            items,
+            lambda item: (
+                "message" if item["entity_type"] == "message" else "activity",
+                str(item["entity_id"]),
+            ),
+        )
     next_cursor = None
     if len(rows) > limit and page_rows:
         last = page_rows[-1]
@@ -1491,7 +1526,23 @@ def support_threads(
                 ).limit(limit + 1)
             )
         )
-    page_rows = conversations[:limit]
+        page_rows = conversations[:limit]
+        items = [
+            {
+                "id": row.id,
+                "title": row.title_display,
+                "message_count": row.message_count,
+                "first_activity_ms": row.first_activity_ms,
+                "last_activity_ms": row.last_activity_ms,
+                "href": f"/conversations/{row.id}",
+            }
+            for row in page_rows
+        ]
+        attach_star_states(
+            session,
+            items,
+            lambda item: ("conversation", str(item["id"])),
+        )
     next_cursor = None
     if len(conversations) > limit and page_rows:
         last = page_rows[-1]
@@ -1505,17 +1556,7 @@ def support_threads(
         )
     return {
         "coverage": coverage,
-        "items": [
-            {
-                "id": row.id,
-                "title": row.title_display,
-                "message_count": row.message_count,
-                "first_activity_ms": row.first_activity_ms,
-                "last_activity_ms": row.last_activity_ms,
-                "href": f"/conversations/{row.id}",
-            }
-            for row in page_rows
-        ],
+        "items": items,
         "page": {
             "total": total,
             "limit": limit,

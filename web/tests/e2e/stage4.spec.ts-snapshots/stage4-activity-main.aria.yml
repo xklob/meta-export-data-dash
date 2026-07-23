@@ -66,7 +66,7 @@
     - region "Scrollable virtualized activity results":
       - table:
         - rowgroup:
-          - row "Activity Category Post context Actor Date Files Source Jump":
+          - row "Activity Category Post context Actor Date Files Source Actions":
             - columnheader "Activity"
             - columnheader "Category"
             - columnheader "Post context"
@@ -74,9 +74,9 @@
             - columnheader "Date"
             - columnheader "Files"
             - columnheader "Source"
-            - columnheader "Jump"
+            - columnheader "Actions"
         - rowgroup:
-          - row /Fixture album photo A retained caption Available Posts Album Photo Group Source subtype classification Archive User Nov \d+, \d+, 5:\d+ PM 1 file your_facebook_activity\/posts\/album\.json Open source record/:
+          - row /Fixture album photo A retained caption Available Posts Album Photo Group Source subtype classification Archive User Nov \d+, \d+, 5:\d+ PM 1 file your_facebook_activity\/posts\/album\.json Star Album Photo activity Open source record/:
             - cell "Fixture album photo A retained caption Available":
               - strong: Fixture album photo
               - text: ""
@@ -90,7 +90,8 @@
             - cell /Nov \d+, \d+, 5:\d+ PM/
             - cell "1 file"
             - cell "your_facebook_activity/posts/album.json"
-            - cell "Open source record":
+            - cell "Star Album Photo activity Open source record":
+              - button "Star Album Photo activity"
               - link "Open source record":
                 - /url: /timeline?around=activity:activity-one#activity-activity-one
                 - text: ""

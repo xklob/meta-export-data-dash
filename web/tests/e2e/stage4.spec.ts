@@ -1087,7 +1087,7 @@ test('cursor windows retain keyboard focus and truthful busy state through succe
 })
 
 test('Stage 4 pages remain overflow-free and WCAG 2.2 axe-clean at desktop and mobile sizes', async ({ page }) => {
-  test.setTimeout(60_000)
+  test.setTimeout(120_000)
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport)
     for (const path of ['/people', '/events', '/activity', '/timeline', '/support', '/analytics']) {

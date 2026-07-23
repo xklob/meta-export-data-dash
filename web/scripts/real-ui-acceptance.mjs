@@ -54,6 +54,7 @@ export const topLevelRoutes = [
   ['settings', '/settings', 'Settings'],
   ['conversations', '/conversations', 'Conversations'],
   ['media', '/media', 'Media'],
+  ['starred', '/starred', 'Starred'],
   ['search', '/search', 'Search the archive'],
   ['enrichment', '/enrichment', 'Transcripts and language signals'],
   ['people', '/people', 'People'],

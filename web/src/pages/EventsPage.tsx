@@ -1,8 +1,9 @@
 import { useSearch } from '@tanstack/react-router'
-import { CalendarCheck2, CalendarDays, Search, Star, UsersRound } from 'lucide-react'
+import { BadgeCheck, CalendarCheck2, CalendarDays, Search, UsersRound } from 'lucide-react'
 import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import { CoverageNotice } from '../components/CoverageNotice'
 import { CursorWindowControls } from '../components/CursorWindowControls'
+import { StarButton } from '../components/StarButton'
 import { EmptyState, ErrorState, MetricCard, PageHeading, PageLoading, StatusBadge } from '../components/ui'
 import { api, type EventQuery } from '../lib/api'
 import type { SortDirection } from '../lib/contracts'
@@ -120,7 +121,7 @@ export function EventsPage() {
       {firstPage?.summary ? (
         <section className="metric-grid metric-grid--four" aria-label="Event totals">
           <MetricCard icon={CalendarDays} label="Matching events" value={formatCount(firstPage.page.total)} detail="Source-backed records" />
-          <MetricCard icon={Star} label="Hosted / created" value={formatCount(firstPage.summary.hosted)} detail="Explicit source status" />
+          <MetricCard icon={BadgeCheck} label="Hosted / created" value={formatCount(firstPage.summary.hosted)} detail="Explicit source status" />
           <MetricCard icon={CalendarCheck2} label="Attended" value={formatCount(firstPage.summary.attended)} detail="Only explicit Went records" />
           <MetricCard icon={UsersRound} label="Other statuses" value={firstPage.summary.by_status ? formatCount(Object.values(firstPage.summary.by_status).reduce((sum, count) => sum + count, 0) - (firstPage.summary.attended ?? 0)) : '—'} detail="Invited, interested, declined, etc." />
         </section>
@@ -142,7 +143,7 @@ export function EventsPage() {
                     <article key={event.id} className="event-card" id={`event-${event.id}`}>
                       <div className="event-card__date"><CalendarDays size={18} /><span>{formatTimestampMs(event.timestamp_ms, timezone)}</span></div>
                       <div className="event-card__body">
-                        <header><h3>{event.title || 'Untitled event'}</h3><StatusBadge status={event.status} /></header>
+                        <header><h3>{event.title || 'Untitled event'}</h3><span className="event-card__actions"><StatusBadge status={event.status} /><StarButton target={event.star_target ?? { target_type: 'activity', target_id: event.id }} star={event.star} label={`event ${event.title || 'Untitled event'}`} /></span></header>
                         <p>{event.description || 'No exported event description.'}</p>
                         <footer>
                           <span>{event.hosted == null ? 'Host unknown' : event.hosted ? 'Hosted by you' : 'Not hosted by you'}</span>

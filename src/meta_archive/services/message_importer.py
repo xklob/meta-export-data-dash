@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, cast
 from urllib.parse import unquote, urlsplit
 
 import orjson
@@ -33,6 +33,7 @@ from meta_archive.models import (
     SourceChunk,
     SourceFile,
     SourceRecord,
+    Star,
 )
 from meta_archive.paths import ArchiveLayout
 from meta_archive.services.hashing import sha256_file
@@ -44,12 +45,23 @@ from meta_archive.services.source_import_lock import (
     assert_source_import_publication_allowed,
     source_import_publication_lock,
 )
+from meta_archive.services.stars import (
+    StarTargetKey,
+    StarTargetType,
+    delete_stars_for_targets,
+    resolve_star_targets,
+)
 from meta_archive.services.text import NormalizedText, normalize_text
 
 ProgressCallback = Callable[[str, int, int | None], None]
 
 MESSAGE_PARSER_VERSION = f"{__version__}:messages-v1"
 DEFAULT_OWNER_NAME = "Archive Owner"
+_STAR_RECONCILIATION_VERSION = 1
+_MESSAGE_IMPORT_STAR_TYPES = frozenset(
+    {"message", "conversation", "attachment", "messenger_contact"}
+)
+_MESSAGE_GLOBAL_STAR_TYPES = frozenset({"message", "conversation", "messenger_contact"})
 
 THREAD_CATEGORIES = frozenset(
     {
@@ -1736,6 +1748,131 @@ def _reconcile_conversation_aggregates(session: Session) -> None:
     )
 
 
+def _message_import_owned_star_targets(session: Session) -> set[StarTargetKey]:
+    """Snapshot starred identities whose authoritative representation this importer replaces."""
+
+    targets: set[StarTargetKey] = {
+        ("message", target_id)
+        for target_id in session.scalars(
+            select(Star.target_id)
+            .join(Message, Message.id == Star.target_id)
+            .where(Star.target_type == "message")
+        )
+    }
+    targets.update(
+        ("conversation", target_id)
+        for target_id in session.scalars(
+            select(Star.target_id)
+            .join(Conversation, Conversation.id == Star.target_id)
+            .where(Star.target_type == "conversation")
+        )
+    )
+    targets.update(
+        ("attachment", target_id)
+        for target_id in session.scalars(
+            select(Star.target_id)
+            .join(AttachmentOccurrence, AttachmentOccurrence.id == Star.target_id)
+            .where(
+                Star.target_type == "attachment",
+                AttachmentOccurrence.activity_record_id.is_(None),
+                or_(
+                    AttachmentOccurrence.message_id.is_not(None),
+                    AttachmentOccurrence.conversation_id.is_not(None),
+                ),
+            )
+        )
+    )
+    contact_targets: set[StarTargetKey] = {
+        ("messenger_contact", target_id)
+        for target_id in session.scalars(
+            select(Star.target_id).where(Star.target_type == "messenger_contact")
+        )
+    }
+    contact_resolutions = resolve_star_targets(
+        session,
+        contact_targets,
+        include_payload=False,
+    )
+    targets.update(
+        key for key, resolution in contact_resolutions.items() if resolution.state != "missing"
+    )
+    return targets
+
+
+def _pending_star_reconciliation_checkpoint(
+    targets: set[StarTargetKey],
+) -> dict[str, object]:
+    return {
+        "version": _STAR_RECONCILIATION_VERSION,
+        "state": "pending",
+        "targets": [
+            {"target_type": target_type, "target_id": target_id}
+            for target_type, target_id in sorted(targets)
+        ],
+    }
+
+
+def _pending_message_import_star_targets(session: Session) -> set[StarTargetKey]:
+    """Recover exact ownership snapshots from interrupted or incomplete message imports."""
+
+    targets: set[StarTargetKey] = set()
+    checkpoints = session.scalars(
+        select(ImportRun.checkpoint_json).where(ImportRun.kind == "messages")
+    )
+    for checkpoint in checkpoints:
+        raw = checkpoint.get("star_reconciliation")
+        if raw is None:
+            continue
+        if (
+            not isinstance(raw, dict)
+            or raw.get("version") != _STAR_RECONCILIATION_VERSION
+            or raw.get("state") not in {"pending", "completed"}
+        ):
+            raise ValueError("Message import star-reconciliation checkpoint is invalid")
+        if raw["state"] == "completed":
+            continue
+        rows = raw.get("targets")
+        if not isinstance(rows, list):
+            raise ValueError("Message import star-reconciliation checkpoint is invalid")
+        for row in rows:
+            if (
+                not isinstance(row, dict)
+                or set(row) != {"target_type", "target_id"}
+                or row.get("target_type") not in _MESSAGE_IMPORT_STAR_TYPES
+                or not isinstance(row.get("target_id"), str)
+                or not row["target_id"]
+            ):
+                raise ValueError("Message import star-reconciliation checkpoint is invalid")
+            targets.add(
+                (
+                    cast(StarTargetType, row["target_type"]),
+                    row["target_id"],
+                )
+            )
+    return targets
+
+
+def _prune_missing_message_import_star_targets(
+    session: Session,
+    current_targets: set[StarTargetKey],
+) -> tuple[int, int]:
+    targets = current_targets | _pending_message_import_star_targets(session)
+    targets.update(
+        (cast(StarTargetType, target_type), target_id)
+        for target_type, target_id in session.execute(
+            select(Star.target_type, Star.target_id).where(
+                Star.target_type.in_(_MESSAGE_GLOBAL_STAR_TYPES)
+            )
+        )
+    )
+    resolutions = resolve_star_targets(session, targets, include_payload=False)
+    deleted = delete_stars_for_targets(
+        session,
+        (key for key, resolution in resolutions.items() if resolution.state == "missing"),
+    )
+    return deleted, len(targets)
+
+
 def _upsert_coverage(
     session: Session,
     *,
@@ -2055,6 +2192,8 @@ def import_messages_locked(
     job_id = str(uuid.uuid4())
     now = datetime.now(UTC)
     summary = MessageImportSummary(candidate_file_count=len(candidates))
+    with Session(engine) as session:
+        owned_star_targets = _message_import_owned_star_targets(session)
 
     with Session(engine) as session, session.begin():
         session.add(
@@ -2064,7 +2203,11 @@ def import_messages_locked(
                 status="running",
                 parser_version=MESSAGE_PARSER_VERSION,
                 counters_json={},
-                checkpoint_json={},
+                checkpoint_json={
+                    "star_reconciliation": _pending_star_reconciliation_checkpoint(
+                        owned_star_targets
+                    )
+                },
             )
         )
         session.add(
@@ -2209,6 +2352,22 @@ def import_messages_locked(
                 if summary.invalid_file_count or summary.unsupported_file_count
                 else "completed"
             )
+            reconciliation_checkpoint: dict[str, object]
+            if status == "completed":
+                stars_pruned, star_candidate_count = _prune_missing_message_import_star_targets(
+                    session,
+                    owned_star_targets,
+                )
+                reconciliation_checkpoint = {
+                    "version": _STAR_RECONCILIATION_VERSION,
+                    "state": "completed",
+                    "candidate_count": star_candidate_count,
+                    "pruned_count": stars_pruned,
+                }
+            else:
+                reconciliation_checkpoint = _pending_star_reconciliation_checkpoint(
+                    owned_star_targets
+                )
             counters = asdict(summary)
             session.execute(
                 update(ImportRun)
@@ -2217,7 +2376,10 @@ def import_messages_locked(
                     status=status,
                     finished_at=finished,
                     counters_json=counters,
-                    checkpoint_json={"processed_files": len(candidates)},
+                    checkpoint_json={
+                        "processed_files": len(candidates),
+                        "star_reconciliation": reconciliation_checkpoint,
+                    },
                 )
             )
             session.execute(

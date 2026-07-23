@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import Engine, func, select, text
 from sqlalchemy.orm import Session
@@ -30,9 +30,11 @@ from meta_archive.models import (
     SourceChunk,
     SourceFile,
     SourceRecord,
+    Star,
 )
 from meta_archive.paths import ArchiveLayout
 from meta_archive.services.hashing import sha256_file
+from meta_archive.services.stars import StarTargetKey, resolve_star_targets
 
 ProgressCallback = Callable[[str, int, int | None], None]
 SOURCE_RETIREMENT_REQUIRED_CHECK_KEYS = frozenset(
@@ -47,6 +49,7 @@ SOURCE_RETIREMENT_REQUIRED_CHECK_KEYS = frozenset(
         "json.parse_status",
         "messages.imported",
         "library.completion_marker",
+        "stars.targets",
         "idempotency.messages",
         "idempotency.activity",
         "deep.source_bytes",
@@ -885,6 +888,39 @@ def verify_catalog(
                 select(func.count(ActivityRecord.pk)).where(ActivityRecord.deleted_at.is_(None))
             )
             or 0
+        )
+        star_targets = cast(
+            list[StarTargetKey],
+            list(
+                session.execute(
+                    select(Star.target_type, Star.target_id).order_by(
+                        Star.target_type,
+                        Star.target_id,
+                    )
+                )
+            ),
+        )
+        star_resolutions = resolve_star_targets(
+            session,
+            star_targets,
+            include_payload=False,
+        )
+        star_state_counts = {
+            state: sum(resolution.state == state for resolution in star_resolutions.values())
+            for state in ("active", "latent", "missing")
+        }
+        checks.append(
+            VerificationCheck(
+                "stars.targets",
+                "pass" if star_state_counts["missing"] == 0 else "fail",
+                0,
+                star_state_counts["missing"],
+                (
+                    f"active={star_state_counts['active']}, "
+                    f"latent={star_state_counts['latent']}, "
+                    f"missing={star_state_counts['missing']}"
+                ),
+            )
         )
         checks.append(
             _library_marker_check(

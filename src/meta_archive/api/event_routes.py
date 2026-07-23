@@ -23,6 +23,7 @@ from meta_archive.api.stage4_common import (
     unavailable_page,
 )
 from meta_archive.models import ActivityRecord, SourceChunk, SourceFile
+from meta_archive.services.stars import attach_star_states
 from meta_archive.services.text import normalize_text
 
 event_router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_session)])
@@ -247,6 +248,35 @@ def events(
             id=page_rows[-1][0].id,
         )
     counts = Counter(_event_status(item[0]) for item in filtered)
+    items = [
+        {
+            "id": row.id,
+            "title": row.title_display,
+            "description": row.content_display,
+            "timestamp_ms": row.timestamp_ms,
+            "unknown_date": row.timestamp_ms is None,
+            "status": _event_status(row),
+            "hosted": _event_hosted(row, _event_status(row)),
+            "source": {
+                "source_file_id": row.source_file_id,
+                "source_record_id": row.source_record_id,
+                "chunk": chunk,
+                "relative_path": path,
+                "json_pointer": row.json_pointer,
+            },
+            "jump": {
+                "href": f"/events?around={row.id}#event-{row.id}",
+                "fragment": f"event-{row.id}",
+            },
+        }
+        for row, chunk, path in page_rows
+    ]
+    with session_for(request) as session:
+        attach_star_states(
+            session,
+            items,
+            lambda item: ("activity", str(item["id"])),
+        )
     return {
         "coverage": coverage,
         "around": (
@@ -254,29 +284,7 @@ def events(
             if around is not None
             else None
         ),
-        "items": [
-            {
-                "id": row.id,
-                "title": row.title_display,
-                "description": row.content_display,
-                "timestamp_ms": row.timestamp_ms,
-                "unknown_date": row.timestamp_ms is None,
-                "status": _event_status(row),
-                "hosted": _event_hosted(row, _event_status(row)),
-                "source": {
-                    "source_file_id": row.source_file_id,
-                    "source_record_id": row.source_record_id,
-                    "chunk": chunk,
-                    "relative_path": path,
-                    "json_pointer": row.json_pointer,
-                },
-                "jump": {
-                    "href": f"/events?around={row.id}#event-{row.id}",
-                    "fragment": f"event-{row.id}",
-                },
-            }
-            for row, chunk, path in page_rows
-        ],
+        "items": items,
         "summary": {
             "by_status": dict(sorted(counts.items())),
             "hosted": sum(

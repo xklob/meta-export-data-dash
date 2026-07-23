@@ -65,6 +65,7 @@ from meta_archive.services.search import (
     SearchMode,
     SearchUnavailableError,
     derived_occurrence_page,
+    direct_conflict_feedback_revision_required,
     run_search,
 )
 from meta_archive.services.search_index import (
@@ -75,6 +76,7 @@ from meta_archive.services.search_index import (
     held_out_feedback_revision,
     semantic_index_lock_is_held,
 )
+from meta_archive.services.stars import annotate_star_targets
 
 search_router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_session)])
 SEARCH_RESULT_CAP = 1_000
@@ -350,7 +352,7 @@ def _cached_search_embedder_factory(request: Request) -> Any:
     configured_factory = _state_value(request, "search_embedder_factory")
 
     def get_embedder(spec: EmbeddingModelSpec) -> TextEmbedder:
-        key = (spec.model_name, spec.model_revision, spec.dimensions)
+        key = spec
         with lock:
             existing = cache.get(key)
             if existing is not None:
@@ -519,13 +521,18 @@ def search(
     direct_conflict_revision_sha256: str | None = None
     if mode in {"semantic", "hybrid"}:
         with _session(request) as session:
-            semantic_config_id = session.scalar(
-                select(SemanticIndexConfig.id).where(
+            semantic_config = session.scalar(
+                select(SemanticIndexConfig).where(
                     SemanticIndexConfig.active.is_(True),
                     SemanticIndexConfig.status == "ready",
                 )
             )
-        if is_direct_conflict_trigger(q):
+        semantic_config_id = semantic_config.id if semantic_config is not None else None
+        if (
+            is_direct_conflict_trigger(q)
+            and semantic_config is not None
+            and direct_conflict_feedback_revision_required(semantic_config)
+        ):
             try:
                 direct_conflict_revision_sha256 = str(
                     development_feedback_revision_payload(request.app.state.engine)["sha256"]
@@ -589,6 +596,19 @@ def search(
             ),
         )
     items = page.items[offset : offset + limit]
+    with _session(request) as session:
+        annotate_star_targets(
+            session,
+            (
+                (
+                    item,
+                    "message" if item.get("entity_type") == "message" else "activity",
+                    str(item["source_id"]),
+                )
+                for item in items
+                if item.get("entity_type") in {"message", "activity"}
+            ),
+        )
     next_cursor = (
         encode_cursor("search", scope=scope, offset=offset + limit)
         if len(page.items) > offset + limit
@@ -626,7 +646,7 @@ def search_derived_occurrences(
     if from_ms is not None and to_ms is not None and from_ms > to_ms:
         raise HTTPException(status_code=422, detail="Invalid date range")
     try:
-        return derived_occurrence_page(
+        result = derived_occurrence_page(
             request.app.state.engine,
             entity_type=entity_type,
             source_id=source_id,
@@ -641,6 +661,12 @@ def search_derived_occurrences(
             offset=offset,
             limit=limit,
         )
+        with _session(request) as session:
+            annotate_star_targets(
+                session,
+                ((item, "attachment", str(item["occurrence_id"])) for item in result["items"]),
+            )
+        return result
     except SearchUnavailableError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

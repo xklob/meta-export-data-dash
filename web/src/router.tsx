@@ -1,5 +1,6 @@
 import { createRootRoute, createRoute, createRouter, lazyRouteComponent } from '@tanstack/react-router'
 import { AppShell } from './components/AppShell'
+import { StarProvider } from './components/StarButton'
 import { CoveragePage } from './pages/CoveragePage'
 import { HomePage } from './pages/HomePage'
 import { IntegrityPage } from './pages/IntegrityPage'
@@ -10,8 +11,12 @@ import { MediaPage } from './pages/MediaPage'
 import { NotFoundPage } from './pages/NotFoundPage'
 import { SettingsPage } from './pages/SettingsPage'
 
+function RootLayout() {
+  return <StarProvider><AppShell /></StarProvider>
+}
+
 const rootRoute = createRootRoute({
-  component: AppShell,
+  component: RootLayout,
   notFoundComponent: NotFoundPage,
 })
 
@@ -98,6 +103,12 @@ const mediaRoute = createRoute({
   component: MediaPage,
 })
 
+const starredRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/starred',
+  component: lazyRouteComponent(() => import('./pages/StarredPage'), 'StarredPage'),
+})
+
 const searchRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/search',
@@ -170,6 +181,7 @@ export const routeTree = rootRoute.addChildren([
   conversationsRoute,
   conversationRoute,
   mediaRoute,
+  starredRoute,
   searchRoute,
   peopleRoute,
   eventsRoute,

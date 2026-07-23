@@ -53,8 +53,17 @@ from meta_archive.services.reranking import (
     reranker_status_payload,
 )
 from meta_archive.services.search_index import (
+    FASTEMBED_PROVIDER,
+    INJECTED_TEXT_EMBEDDER_PROVIDER,
+    INPUT_ORDER_BATCHING,
     MODEL_SPECS,
+    PROVIDER_DECLARED_POOLING,
     SEMANTIC_RANKING_PIPELINE_VERSION,
+    STABLE_TOKEN_LENGTH_BATCHING,
+    TRANSFORMERS_MAX_SEQUENCE_TOKENS,
+    TRANSFORMERS_POOLING,
+    TRANSFORMERS_PRECISION,
+    TRANSFORMERS_PROVIDER,
     EmbeddingModelSpec,
     TextEmbedder,
     default_text_embedder,
@@ -959,8 +968,61 @@ def _active_config(session: Session) -> SemanticIndexConfig:
 
 def _spec_for_config(config: SemanticIndexConfig) -> EmbeddingModelSpec:
     for spec in MODEL_SPECS.values():
-        if spec.model_name == config.model_name and spec.dimensions == config.dimensions:
+        if (
+            spec.model_name == config.model_name
+            and spec.model_revision == config.model_revision
+            and spec.dimensions == config.dimensions
+            and spec.document_prefix == config.document_prefix
+            and spec.query_prefix == config.query_prefix
+        ):
             return spec
+    implementation = (
+        config.audit_json.get("embedding_implementation")
+        if isinstance(config.audit_json, dict)
+        else None
+    )
+    implementation = implementation if isinstance(implementation, dict) else {}
+    provider = str(implementation.get("provider") or "")
+    if provider not in {
+        FASTEMBED_PROVIDER,
+        INJECTED_TEXT_EMBEDDER_PROVIDER,
+        TRANSFORMERS_PROVIDER,
+    }:
+        provider = (
+            TRANSFORMERS_PROVIDER
+            if config.backend == "lancedb-transformers"
+            else FASTEMBED_PROVIDER
+        )
+    pooling = str(implementation.get("pooling") or "")
+    if not pooling:
+        pooling = (
+            TRANSFORMERS_POOLING if provider == TRANSFORMERS_PROVIDER else PROVIDER_DECLARED_POOLING
+        )
+    max_sequence_tokens_value = implementation.get("max_sequence_tokens")
+    max_sequence_tokens = (
+        int(max_sequence_tokens_value)
+        if isinstance(max_sequence_tokens_value, int)
+        and not isinstance(max_sequence_tokens_value, bool)
+        and max_sequence_tokens_value > 0
+        else TRANSFORMERS_MAX_SEQUENCE_TOKENS
+        if provider == TRANSFORMERS_PROVIDER
+        else None
+    )
+    precision = str(implementation.get("precision") or "")
+    if not precision:
+        precision = (
+            TRANSFORMERS_PRECISION
+            if provider == TRANSFORMERS_PROVIDER
+            else "provider-declared"
+            if provider == INJECTED_TEXT_EMBEDDER_PROVIDER
+            else "provider-declared-onnx"
+        )
+    batching = implementation.get("document_batching")
+    batch_order = INPUT_ORDER_BATCHING
+    if isinstance(batching, dict):
+        recorded_batch_order = str(batching.get("sort_order") or "")
+        if recorded_batch_order == STABLE_TOKEN_LENGTH_BATCHING:
+            batch_order = recorded_batch_order
     return EmbeddingModelSpec(
         alias=config.model_name,
         model_name=config.model_name,
@@ -970,6 +1032,11 @@ def _spec_for_config(config: SemanticIndexConfig) -> EmbeddingModelSpec:
         query_prefix=config.query_prefix,
         language_scope="Recorded by semantic index audit",
         approximate_download_gb=0,
+        provider=provider,
+        pooling=pooling,
+        max_sequence_tokens=max_sequence_tokens,
+        precision=precision,
+        batch_order=batch_order,
     )
 
 
@@ -1354,21 +1421,8 @@ def _accepted_direct_conflict_ranker(
     engine: Engine,
     config: SemanticIndexConfig,
 ) -> DirectConflictRanker:
-    accepted = config.audit_json.get("accepted_semantic_ir_evaluation")
-    calibration = (
-        accepted.get("direct_conflict_development_calibration")
-        if isinstance(accepted, dict)
-        else None
-    )
-    if not isinstance(calibration, dict) or not (
-        calibration.get("status") == "passed"
-        and calibration.get("passed") is True
-        and calibration.get("required_for_production_acceptance") is True
-        and calibration.get("evidence_kind") == "conversation_grouped_development_calibration"
-        and calibration.get("held_out") is False
-        and calibration.get("ranking_pipeline") == SEMANTIC_RANKING_PIPELINE_VERSION
-        and calibration.get("feedback_revision_stable_during_evaluation") is True
-    ):
+    calibration = _accepted_direct_conflict_calibration(config)
+    if calibration is None:
         raise SearchUnavailableError(
             "The literal direct-conflict ranker lacks an accepted current calibration; "
             "no baseline fallback was used"
@@ -1421,6 +1475,59 @@ def _accepted_direct_conflict_ranker(
     return ranker
 
 
+def _accepted_direct_conflict_calibration(
+    config: SemanticIndexConfig,
+) -> dict[str, Any] | None:
+    accepted = config.audit_json.get("accepted_semantic_ir_evaluation")
+    calibration = (
+        accepted.get("direct_conflict_development_calibration")
+        if isinstance(accepted, dict)
+        else None
+    )
+    if not isinstance(calibration, dict) or not (
+        calibration.get("status") == "passed"
+        and calibration.get("passed") is True
+        and calibration.get("required_for_production_acceptance") is True
+        and calibration.get("evidence_kind") == "conversation_grouped_development_calibration"
+        and calibration.get("held_out") is False
+        and calibration.get("ranking_pipeline") == SEMANTIC_RANKING_PIPELINE_VERSION
+        and calibration.get("feedback_revision_stable_during_evaluation") is True
+    ):
+        return None
+    return cast(dict[str, Any], calibration)
+
+
+def _manual_direct_conflict_fallback(
+    config: SemanticIndexConfig,
+) -> dict[str, Any] | None:
+    override = config.audit_json.get("manual_activation_override")
+    if not isinstance(override, dict) or not (
+        override.get("version") == "semantic-manual-activation-v1"
+        and override.get("candidate_config_id") == config.id
+        and override.get("acknowledged_failed_quality_gate") is True
+        and override.get("source") == "cli_only"
+    ):
+        return None
+    return {
+        "status": "normal_cross_encoder_fallback",
+        "specialized_ranker_used": False,
+        "reason": "manual_override_without_accepted_direct_conflict_calibration",
+        "trigger": "exact_normalized_literal",
+        "pipeline": "cosine_retrieval_then_local_cross_encoder",
+        "manual_activation_version": override["version"],
+        "manual_activation_job_id": override.get("activation_job_id"),
+    }
+
+
+def direct_conflict_feedback_revision_required(config: SemanticIndexConfig) -> bool:
+    """Return whether a literal trigger will use the accepted specialized ranker."""
+
+    return bool(
+        _accepted_direct_conflict_calibration(config) is not None
+        or _manual_direct_conflict_fallback(config) is None
+    )
+
+
 def semantic_search(
     layout: ArchiveLayout,
     engine: Engine,
@@ -1443,6 +1550,7 @@ def semantic_search(
             "window_version": config.window_version,
             "artifact_fingerprint": config.audit_json.get("artifact_fingerprint"),
             "embedding_implementation": config.audit_json.get("embedding_implementation"),
+            "manual_activation_override": config.audit_json.get("manual_activation_override"),
             "reranker": reranker_status_payload(),
         }
         table_name = config.vector_table
@@ -1494,11 +1602,21 @@ def semantic_search(
         if direct_conflict_triggered
         else min(max(limit * settings.semantic_candidate_multiplier, 100), MAX_RERANK_CANDIDATES)
     )
-    direct_conflict_ranker = (
-        _accepted_direct_conflict_ranker(layout, engine, config)
-        if direct_conflict_triggered
-        else None
-    )
+    direct_conflict_fallback: dict[str, Any] | None = None
+    direct_conflict_ranker: DirectConflictRanker | None = None
+    if direct_conflict_triggered:
+        if _accepted_direct_conflict_calibration(config) is not None:
+            direct_conflict_ranker = _accepted_direct_conflict_ranker(
+                layout,
+                engine,
+                config,
+            )
+        else:
+            direct_conflict_fallback = _manual_direct_conflict_fallback(config)
+            if direct_conflict_fallback is None:
+                # Preserve the ordinary fail-closed contract. Only an explicit, audited CLI
+                # override may use the normal cross-encoder for this special literal trigger.
+                _accepted_direct_conflict_ranker(layout, engine, config)
     vector_query = (
         database.open_table(table_name)
         .search(vector, vector_column_name="vector")
@@ -1515,6 +1633,9 @@ def semantic_search(
     )
     ordered_ids = [str(candidate["id"]) for candidate in candidates]
     if not ordered_ids:
+        if direct_conflict_fallback is not None:
+            config_payload["direct_conflict_ranker"] = direct_conflict_fallback
+            config_payload["ranking_pipeline"] = SEMANTIC_RANKING_PIPELINE_VERSION
         return SearchPage(items=[], total_candidates=0, index_config=config_payload)
     distances = {
         str(candidate["id"]): float(candidate.get("_distance", 1.0)) for candidate in candidates
@@ -1582,15 +1703,22 @@ def semantic_search(
             config_payload["direct_conflict_ranker"] = (
                 direct_conflict_ranker.audit.public_metadata()
             )
+        elif direct_conflict_fallback is not None:
+            config_payload["direct_conflict_ranker"] = direct_conflict_fallback
+        ranking_provenance = {
+            **ranking.provenance,
+            **(
+                {"literal_direct_conflict": direct_conflict_fallback}
+                if direct_conflict_fallback is not None
+                else {}
+            ),
+        }
         items = _window_items(
             session,
             windows_by_id,
             [(window_id, score) for window_id, score, _cross, _cosine in ranking.rows[:limit]],
             score_kind=ranking.score_kind,
-            ranking_provenance={
-                **ranking.provenance,
-                "reranker": reranker_status,
-            },
+            ranking_provenance={**ranking_provenance, "reranker": reranker_status},
         )
     return SearchPage(
         items=_result_contract(engine, items),
@@ -1738,15 +1866,22 @@ def hybrid_search(
             ):
                 scores[f"record:{result_id}"] = 1.0 / (_RRF_K + rank)
         ordered = sorted(scores.items(), key=lambda item: (-item[1], item[0]))[:limit]
+        semantic_direct_conflict = (semantic.index_config or {}).get("direct_conflict_ranker")
+        hybrid_provenance = {
+            "pipeline": "reciprocal_rank_fusion",
+            "semantic_reranker": (semantic.index_config or {}).get("reranker"),
+            **(
+                {"literal_direct_conflict": semantic_direct_conflict}
+                if isinstance(semantic_direct_conflict, dict)
+                else {}
+            ),
+        }
         window_items = _window_items(
             session,
             windows_by_id,
             [item for item in ordered if not item[0].startswith("record:")],
             score_kind="rrf",
-            ranking_provenance={
-                "pipeline": "reciprocal_rank_fusion",
-                "semantic_reranker": (semantic.index_config or {}).get("reranker"),
-            },
+            ranking_provenance=hybrid_provenance,
         )
         window_payloads = {str(item["window_id"]): item for item in window_items}
         items: list[dict[str, Any]] = []
@@ -1756,7 +1891,16 @@ def hybrid_search(
                 if lexical is None:
                     continue
                 payload = dict(lexical)
-                payload.update(score=score, score_kind="rrf", rank=len(items) + 1)
+                lexical_provenance = payload.get("ranking_provenance")
+                payload.update(
+                    score=score,
+                    score_kind="rrf",
+                    rank=len(items) + 1,
+                    ranking_provenance={
+                        **(lexical_provenance if isinstance(lexical_provenance, dict) else {}),
+                        **hybrid_provenance,
+                    },
+                )
             else:
                 window_payload = window_payloads.get(result_key)
                 if window_payload is None:

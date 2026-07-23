@@ -102,6 +102,7 @@
   - region "Conversation ledger":
     - heading "Conversation ledger" [level=2]
     - paragraph: 4 loaded · 4 matching
+    - paragraph: Scroll inside the framed pane to browse all loaded conversations. Controls below load or move to another batch.
     - table "Conversations":
       - row "Sort by Conversation Sort by Type Sort by People Sort by Activity Sort by Messages Sent / received Sort by Files / media Sort by Size Sort by Coverage":
         - columnheader "Sort by Conversation":
@@ -122,10 +123,11 @@
         - columnheader "Sort by Coverage":
           - button "Sort by Coverage"
       - rowgroup:
-        - row /Alex Example Archived Threads · E2ee Cutover Direct 2 Jan 1, \d+ Jan 1, \d+ first · \d+ active days \d+ \d+ \/ \d+ 6 \/ 5 2 photos, 1 videos, 1 audio files \d+\.\d+ MiB Complete/:
-          - cell "Alex Example Archived Threads · E2ee Cutover":
+        - row /Alex Example Star conversation Alex Example Archived Threads · E2ee Cutover Direct 2 Jan 1, \d+ Jan 1, \d+ first · \d+ active days \d+ \d+ \/ \d+ 6 \/ 5 2 photos, 1 videos, 1 audio files \d+\.\d+ MiB Complete/:
+          - cell "Alex Example Star conversation Alex Example Archived Threads · E2ee Cutover":
             - link "Alex Example":
               - /url: /conversations/conv-alex
+            - button "Star conversation Alex Example"
             - text: ""
           - cell "Direct"
           - cell "2"
@@ -140,10 +142,11 @@
             - text: ""
           - cell /\d+\.\d+ MiB/
           - cell "Complete"
-        - row /Family Plans Inbox Group 8 Jan 1, \d+ Dec \d+, \d+ first · \d+ active days \d+ \d+ \/ \d+ 4 \/ 4 2 photos, 1 videos, 1 audio files \d+\.\d+ MiB Incomplete/:
-          - cell "Family Plans Inbox":
+        - row /Family Plans Star conversation Family Plans Inbox Group 8 Jan 1, \d+ Dec \d+, \d+ first · \d+ active days \d+ \d+ \/ \d+ 4 \/ 4 2 photos, 1 videos, 1 audio files \d+\.\d+ MiB Incomplete/:
+          - cell "Family Plans Star conversation Family Plans Inbox":
             - link "Family Plans":
               - /url: /conversations/conv-family
+            - button "Star conversation Family Plans"
             - text: ""
           - cell "Group"
           - cell "8"
@@ -158,10 +161,11 @@
             - text: ""
           - cell /\d+\.\d+ MiB/
           - cell "Incomplete"
-        - row /Marketplace notifications Marketplace System 1 Nov \d+, \d+ Nov \d+, \d+ first · \d+ active days 8 0 \/ 8 0 \/ 0 0 photos, 0 videos, 0 audio files 0 B Complete/:
-          - cell "Marketplace notifications Marketplace":
+        - row /Marketplace notifications Star conversation Marketplace notifications Marketplace System 1 Nov \d+, \d+ Nov \d+, \d+ first · \d+ active days 8 0 \/ 8 0 \/ 0 0 photos, 0 videos, 0 audio files 0 B Complete/:
+          - cell "Marketplace notifications Star conversation Marketplace notifications Marketplace":
             - link "Marketplace notifications":
               - /url: /conversations/conv-system
+            - button "Star conversation Marketplace notifications"
             - text: ""
           - cell "System"
           - cell "1"
@@ -176,10 +180,11 @@
             - text: ""
           - cell "0 B"
           - cell "Complete"
-        - row /Media Only Contact Archived Threads Media-only thread · no message records Direct 2 Unknown date Unknown date first · 0 active days 0 0 \/ 0 1 \/ 1 1 photos, 0 videos, 0 audio files \d+\.\d+ KiB Complete/:
-          - cell "Media Only Contact Archived Threads Media-only thread · no message records":
+        - row /Media Only Contact Star conversation Media Only Contact Archived Threads Media-only thread · no message records Direct 2 Unknown date Unknown date first · 0 active days 0 0 \/ 0 1 \/ 1 1 photos, 0 videos, 0 audio files \d+\.\d+ KiB Complete/:
+          - cell "Media Only Contact Star conversation Media Only Contact Archived Threads Media-only thread · no message records":
             - link "Media Only Contact":
               - /url: /conversations/conv-media-only
+            - button "Star conversation Media Only Contact"
             - text: ""
             - strong: Media-only thread · no message records
           - cell "Direct"

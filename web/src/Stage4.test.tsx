@@ -33,8 +33,16 @@ const activityItem = {
 }
 
 function stageFourFetchMock() {
-  const mock = vi.fn(async (input: RequestInfo | URL) => {
+  const mock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), 'http://localhost')
+    const method = (init?.method ?? 'GET').toUpperCase()
+    if (url.pathname === '/api/v1/stars/activity/friend-one' && method === 'PUT') {
+      return Response.json({
+        star_target: { target_type: 'activity', target_id: 'friend-one' },
+        star: { id: 'star-friend-one', starred_at: '2026-07-23T01:00:00Z' },
+        created: true,
+      })
+    }
     if (url.pathname === '/api/v1/health') return Response.json(fixtures.health)
     if (url.pathname === '/api/v1/settings') return Response.json(fixtures.settings)
     if (url.pathname === '/api/v1/activity' || url.pathname.startsWith('/api/v1/activity/views/')) {
@@ -54,7 +62,7 @@ function stageFourFetchMock() {
     if (url.pathname === '/api/v1/people') {
       const view = url.searchParams.get('view')
       if (view !== 'contacts') {
-        if (url.searchParams.has('around')) return Response.json({ coverage: { ...unavailableCoverage, key: view, label: 'Friends', status: 'available', raw_count: 1, logical_count: 1, absence_is_not_zero_history: false }, authority: 'source_records', contacts_are_not_included: true, items: [{ id: 'friend-one', name: 'Former Friend', status: 'removed', friendship_status: 'removed', timestamp_ms: 1_700_000_000_000, source: activityItem.source, jump: { href: '/people?view=friends&around=friend-one#relationship-friend-one', fragment: 'relationship-friend-one' } }], page: { total: 1, limit: 100, next_cursor: null, count_is_unknown: false }, around: { requested: 'friend-one', relationship_id: 'friend-one', resolved: true } })
+        if (url.searchParams.has('around')) return Response.json({ coverage: { ...unavailableCoverage, key: view, label: 'Friends', status: 'available', raw_count: 1, logical_count: 1, absence_is_not_zero_history: false }, authority: 'source_records', contacts_are_not_included: true, items: [{ id: 'friend-one', name: 'Former Friend', status: 'removed', friendship_status: 'removed', timestamp_ms: 1_700_000_000_000, direct_counts: { messages: 4, photos: 1, videos: 0, audio: 0 }, source: activityItem.source, jump: { href: '/people?view=friends&around=friend-one#relationship-friend-one', fragment: 'relationship-friend-one' } }], page: { total: 1, limit: 100, next_cursor: null, count_is_unknown: false }, around: { requested: 'friend-one', relationship_id: 'friend-one', resolved: true } })
         return Response.json({ coverage: { ...unavailableCoverage, key: view, label: 'Friends', description: 'Accepted-friend history is unavailable in this export.' }, authority: 'source_records_required', contacts_are_not_included: true, items: [], page: { total: null, limit: 100, next_cursor: null, count_is_unknown: true } })
       }
       return Response.json({
@@ -168,6 +176,7 @@ describe('Stage 4 archive views', () => {
 
   it('resolves event and relationship deep links into the rendered page', async () => {
     const fetchMock = stageFourFetchMock()
+    const user = userEvent.setup()
     await renderAt('/events?around=event-one#event-event-one')
     expect(await screen.findByRole('heading', { name: 'Hosted fixture' })).toBeVisible()
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/events?') && String(input).includes('around=event-one'))).toBe(true)
@@ -176,6 +185,11 @@ describe('Stage 4 archive views', () => {
     expect(await screen.findByRole('heading', { name: 'Former Friend' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Friends' })).toHaveAttribute('aria-pressed', 'true')
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/people?') && String(input).includes('around=friend-one'))).toBe(true)
+    await user.click(screen.getByRole('button', { name: 'Star person Former Friend' }))
+    expect(fetchMock.mock.calls.some(([input, init]) => (
+      new URL(String(input), 'http://localhost').pathname === '/api/v1/stars/activity/friend-one'
+      && init?.method === 'PUT'
+    ))).toBe(true)
   })
 
   it('keeps mobile people pages compact without dropping a deep-link target', async () => {

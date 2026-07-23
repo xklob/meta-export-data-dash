@@ -72,6 +72,25 @@ def _write_latest(layout: ArchiveLayout, checks: list[dict[str, object]]) -> Pat
     return report
 
 
+def _write_legacy_latest_without_stars(layout: ArchiveLayout) -> bytes:
+    """Publish the exact pre-stars receipt shape used by the one-time compatibility bridge."""
+
+    report = _write_latest(layout, _passing_checks())
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    payload["checks"] = [check for check in payload["checks"] if check["key"] != "stars.targets"]
+    payload["gate"] = {
+        "all_mandatory_checks_pass": True,
+        "deep_verified": True,
+        "library_verified": True,
+        "non_pass_keys": [],
+        "required_artifacts_present": True,
+        "source_retirement_eligible": True,
+    }
+    encoded = (json.dumps(payload, sort_keys=True) + "\n").encode()
+    _write_private(report, encoded)
+    return encoded
+
+
 @pytest.fixture
 def prepared_receipt(
     archive_layout: ArchiveLayout,
@@ -144,6 +163,69 @@ def test_rebind_preserves_exact_prior_and_publishes_provenance_bound_receipt(
     direct_deep = next(c for c in _passing_checks() if c["key"] == "deep.source_bytes")
     assert deep == [_carried_check(direct_deep, prior_digest)]
     assert not list(reports.glob("rebind-*"))
+
+
+def test_rebind_accepts_exact_legacy_receipt_missing_only_stars_targets(
+    prepared_receipt: tuple[ArchiveLayout, list[dict[str, object]], bytes],
+) -> None:
+    layout, current, _prior = prepared_receipt
+    prior_bytes = _write_legacy_latest_without_stars(layout)
+    prior_digest = hashlib.sha256(prior_bytes).hexdigest()
+
+    assert rebind.rebind_deep_receipt(layout.root) is True
+
+    payload = _latest_payload(layout)
+    assert [check for check in payload["checks"] if check["key"] != "deep.source_bytes"] == current
+    assert (
+        next(check for check in payload["checks"] if check["key"] == "stars.targets")["status"]
+        == "pass"
+    )
+    assert (
+        layout.manifests / "integrity-reports" / f"prior-{prior_digest}.json"
+    ).read_bytes() == prior_bytes
+
+
+def test_rebind_rejects_any_addition_beyond_stars_targets(
+    prepared_receipt: tuple[ArchiveLayout, list[dict[str, object]], bytes],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    layout, current, _prior = prepared_receipt
+    _write_legacy_latest_without_stars(layout)
+    monkeypatch.setattr(
+        rebind,
+        "verify_catalog",
+        lambda *_args, **_kwargs: [*current, _check("unexpected.new.check")],
+    )
+
+    with pytest.raises(rebind.ReceiptRebindError, match="check-identity-changed"):
+        rebind.rebind_deep_receipt(layout.root)
+
+
+def test_rebind_requires_fresh_stars_target_check_for_legacy_receipt(
+    prepared_receipt: tuple[ArchiveLayout, list[dict[str, object]], bytes],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    layout, current, _prior = prepared_receipt
+    _write_legacy_latest_without_stars(layout)
+    without_stars = [check for check in current if check["key"] != "stars.targets"]
+    monkeypatch.setattr(rebind, "verify_catalog", lambda *_args, **_kwargs: without_stars)
+
+    with pytest.raises(rebind.ReceiptRebindError, match="check-identity-changed"):
+        rebind.rebind_deep_receipt(layout.root)
+
+
+def test_rebind_rejects_legacy_receipt_missing_another_required_check(
+    prepared_receipt: tuple[ArchiveLayout, list[dict[str, object]], bytes],
+) -> None:
+    layout, _current, _prior = prepared_receipt
+    prior = _write_legacy_latest_without_stars(layout)
+    payload = json.loads(prior)
+    payload["checks"] = [check for check in payload["checks"] if check["key"] != "sqlite.integrity"]
+    latest = layout.manifests / "integrity-reports" / "latest.json"
+    _write_private(latest, (json.dumps(payload, sort_keys=True) + "\n").encode())
+
+    with pytest.raises(rebind.ReceiptRebindError, match="missing-required-check"):
+        rebind.rebind_deep_receipt(layout.root)
 
 
 @pytest.mark.parametrize("artifact_name", ["original-files.jsonl", "relocation.jsonl"])

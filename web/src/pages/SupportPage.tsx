@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router'
 import { LifeBuoy, MessageSquareText, ShieldCheck } from 'lucide-react'
 import { CoverageNotice } from '../components/CoverageNotice'
 import { CursorWindowControls } from '../components/CursorWindowControls'
+import { StarButton } from '../components/StarButton'
 import { EmptyState, ErrorState, MetricCard, PageHeading, PageLoading } from '../components/ui'
 import { api } from '../lib/api'
 import { formatCount, formatDateMs } from '../lib/format'
@@ -52,6 +53,7 @@ export function SupportPage() {
                   <p>{formatCount(thread.message_count)} messages</p>
                   <span>{formatDateMs(thread.first_activity_ms, timezone)} – {formatDateMs(thread.last_activity_ms, timezone)}</span>
                 </div>
+                <StarButton target={thread.star_target ?? { target_type: 'conversation', target_id: thread.id }} star={thread.star} label={`support conversation ${thread.title || 'Untitled support thread'}`} />
                 <Link
                   className="button button--secondary"
                   to="/conversations/$conversationId"

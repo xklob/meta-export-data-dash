@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from urllib.parse import unquote, urlsplit
 
 import orjson
@@ -27,6 +27,7 @@ from meta_archive.models import (
     SourceChunk,
     SourceFile,
     SourceRecord,
+    Star,
 )
 from meta_archive.paths import ArchiveLayout
 from meta_archive.services.identifiers import canonical_fingerprint, stable_id
@@ -37,10 +38,18 @@ from meta_archive.services.source_import_lock import (
     assert_source_import_publication_allowed,
     source_import_publication_lock,
 )
+from meta_archive.services.stars import (
+    StarTargetKey,
+    StarTargetType,
+    delete_stars_for_targets,
+    resolve_star_targets,
+)
 from meta_archive.services.text import normalize_text
 
 ProgressCallback = Callable[[str, int, int | None], None]
 JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
+_STAR_RECONCILIATION_VERSION = 1
+_ACTIVITY_IMPORT_STAR_TYPES = frozenset({"activity", "attachment"})
 SchemaKind = Literal[
     "album",
     "dating",
@@ -1396,6 +1405,103 @@ def _refresh_coverage(session: Session) -> None:
         )
 
 
+def _activity_import_owned_star_targets(session: Session) -> set[StarTargetKey]:
+    """Snapshot starred activity identities owned by a successful authoritative replacement."""
+
+    targets: set[StarTargetKey] = {
+        ("activity", target_id)
+        for target_id in session.scalars(
+            select(Star.target_id)
+            .join(ActivityRecord, ActivityRecord.id == Star.target_id)
+            .where(Star.target_type == "activity")
+        )
+    }
+    targets.update(
+        ("attachment", target_id)
+        for target_id in session.scalars(
+            select(Star.target_id)
+            .join(AttachmentOccurrence, AttachmentOccurrence.id == Star.target_id)
+            .where(
+                Star.target_type == "attachment",
+                AttachmentOccurrence.activity_record_id.is_not(None),
+            )
+        )
+    )
+    return targets
+
+
+def _pending_star_reconciliation_checkpoint(
+    targets: set[StarTargetKey],
+) -> dict[str, object]:
+    return {
+        "version": _STAR_RECONCILIATION_VERSION,
+        "state": "pending",
+        "targets": [
+            {"target_type": target_type, "target_id": target_id}
+            for target_type, target_id in sorted(targets)
+        ],
+    }
+
+
+def _pending_activity_import_star_targets(session: Session) -> set[StarTargetKey]:
+    """Recover exact ownership snapshots from interrupted or incomplete activity imports."""
+
+    targets: set[StarTargetKey] = set()
+    checkpoints = session.scalars(
+        select(ImportRun.checkpoint_json).where(ImportRun.kind == "activity")
+    )
+    for checkpoint in checkpoints:
+        raw = checkpoint.get("star_reconciliation")
+        if raw is None:
+            continue
+        if (
+            not isinstance(raw, dict)
+            or raw.get("version") != _STAR_RECONCILIATION_VERSION
+            or raw.get("state") not in {"pending", "completed"}
+        ):
+            raise ValueError("Activity import star-reconciliation checkpoint is invalid")
+        if raw["state"] == "completed":
+            continue
+        rows = raw.get("targets")
+        if not isinstance(rows, list):
+            raise ValueError("Activity import star-reconciliation checkpoint is invalid")
+        for row in rows:
+            if (
+                not isinstance(row, dict)
+                or set(row) != {"target_type", "target_id"}
+                or row.get("target_type") not in _ACTIVITY_IMPORT_STAR_TYPES
+                or not isinstance(row.get("target_id"), str)
+                or not row["target_id"]
+            ):
+                raise ValueError("Activity import star-reconciliation checkpoint is invalid")
+            targets.add(
+                (
+                    cast(StarTargetType, row["target_type"]),
+                    row["target_id"],
+                )
+            )
+    return targets
+
+
+def _prune_missing_activity_import_star_targets(
+    session: Session,
+    current_targets: set[StarTargetKey],
+) -> tuple[int, int]:
+    targets = current_targets | _pending_activity_import_star_targets(session)
+    targets.update(
+        ("activity", target_id)
+        for target_id in session.scalars(
+            select(Star.target_id).where(Star.target_type == "activity")
+        )
+    )
+    resolutions = resolve_star_targets(session, targets, include_payload=False)
+    deleted = delete_stars_for_targets(
+        session,
+        (key for key, resolution in resolutions.items() if resolution.state == "missing"),
+    )
+    return deleted, len(targets)
+
+
 def import_activities_locked(
     layout: ArchiveLayout,
     engine: Engine,
@@ -1426,6 +1532,7 @@ def import_activities_locked(
     with Session(engine) as session, session.begin():
         sources = _load_source_files(session)
         media_index = _media_index(session)
+        owned_star_targets = _activity_import_owned_star_targets(session)
         summary.files_considered = len(sources)
         session.add(
             ImportRun(
@@ -1434,7 +1541,11 @@ def import_activities_locked(
                 status="running",
                 parser_version=__version__,
                 counters_json={},
-                checkpoint_json={},
+                checkpoint_json={
+                    "star_reconciliation": _pending_star_reconciliation_checkpoint(
+                        owned_star_targets
+                    )
+                },
             )
         )
         session.add(
@@ -1534,6 +1645,22 @@ def import_activities_locked(
         finished = datetime.now(UTC)
         with Session(engine) as session, session.begin():
             _refresh_coverage(session)
+            successful = summary.files_invalid == 0 and summary.files_unsupported == 0
+            if successful:
+                stars_pruned, star_candidate_count = _prune_missing_activity_import_star_targets(
+                    session,
+                    owned_star_targets,
+                )
+                reconciliation_checkpoint: dict[str, object] = {
+                    "version": _STAR_RECONCILIATION_VERSION,
+                    "state": "completed",
+                    "candidate_count": star_candidate_count,
+                    "pruned_count": stars_pruned,
+                }
+            else:
+                reconciliation_checkpoint = _pending_star_reconciliation_checkpoint(
+                    owned_star_targets
+                )
             session.execute(
                 update(ImportRun)
                 .where(ImportRun.id == run_id)
@@ -1541,7 +1668,10 @@ def import_activities_locked(
                     status="completed",
                     finished_at=finished,
                     counters_json=asdict(summary),
-                    checkpoint_json={"files_processed": len(sources)},
+                    checkpoint_json={
+                        "files_processed": len(sources),
+                        "star_reconciliation": reconciliation_checkpoint,
+                    },
                 )
             )
             session.execute(

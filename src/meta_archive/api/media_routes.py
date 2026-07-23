@@ -42,6 +42,7 @@ from meta_archive.models import (
 from meta_archive.services.jumps import activity_jump
 from meta_archive.services.library import unlinked_media_library_path
 from meta_archive.services.media_derivatives import derivatives_by_blob
+from meta_archive.services.stars import attach_star_states
 from meta_archive.services.text import normalize_text
 
 media_router = APIRouter(prefix="/api/v1/media", dependencies=[Depends(require_session)])
@@ -1208,6 +1209,15 @@ def media(
             item["derivatives"] = (
                 derivative_map.get(blob_sha256, []) if isinstance(blob_sha256, str) else []
             )
+        attach_star_states(
+            session,
+            items,
+            lambda item: (
+                ("blob", str(item["blob_sha256"]))
+                if view == "unique" and item.get("blob_sha256")
+                else ("attachment", str(item["id"]))
+            ),
+        )
         aggregate_memo.require_current()
     total = summary["occurrences"] if view == "occurrences" else summary["unique_files"]
     return {
@@ -1292,27 +1302,32 @@ def blob_occurrences(
             )
             or 0
         )
-    if total == 0:
-        raise HTTPException(status_code=404, detail="Media blob has no retained occurrences")
-    has_more = len(rows) > limit
-    page = rows[:limit]
-    items = [
-        _occurrence_payload(
-            row[0],
-            media_type=row.media_class,
-            conversation_title=row.conversation_title,
-            activity_id=row.activity_id,
-            activity_title=row.activity_title,
-            activity_category=row.activity_category,
-            activity_subtype=row.activity_subtype,
-            source_category=row.source_category,
-            source_chunk=row.source_chunk,
-            source_relative_path=row.source_relative_path,
-            source_extension=row.source_extension,
-            blob_extension=row.blob_extension,
+        if total == 0:
+            raise HTTPException(status_code=404, detail="Media blob has no retained occurrences")
+        has_more = len(rows) > limit
+        page = rows[:limit]
+        items = [
+            _occurrence_payload(
+                row[0],
+                media_type=row.media_class,
+                conversation_title=row.conversation_title,
+                activity_id=row.activity_id,
+                activity_title=row.activity_title,
+                activity_category=row.activity_category,
+                activity_subtype=row.activity_subtype,
+                source_category=row.source_category,
+                source_chunk=row.source_chunk,
+                source_relative_path=row.source_relative_path,
+                source_extension=row.source_extension,
+                blob_extension=row.blob_extension,
+            )
+            for row in page
+        ]
+        attach_star_states(
+            session,
+            items,
+            lambda item: ("attachment", str(item["id"])),
         )
-        for row in page
-    ]
     next_cursor = None
     if has_more and page:
         last = page[-1][0]

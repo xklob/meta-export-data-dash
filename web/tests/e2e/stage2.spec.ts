@@ -413,7 +413,7 @@ test('conversation reader covers both edges, both cursor directions, message kin
   })
   await page.getByRole('region', { name: 'Search this conversation' }).getByRole('button', { name: 'Search', exact: true }).click()
   await searchRequest
-  const result = page.locator('.thread-search-results li').first().getByRole('button')
+  const result = page.locator('.thread-search-results li').first().locator('.thread-search-result__jump')
   await expect(result).toContainText('Jump to message')
   await result.click()
   await expect(page).toHaveURL(/around=message-001#message-message-001/)

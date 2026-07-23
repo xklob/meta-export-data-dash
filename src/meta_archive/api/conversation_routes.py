@@ -30,6 +30,7 @@ from meta_archive.models import (
     SegmentParticipant,
 )
 from meta_archive.services.media_derivatives import derivatives_by_blob
+from meta_archive.services.stars import annotate_star_targets, attach_star_states
 from meta_archive.services.text import normalize_text
 
 conversation_router = APIRouter(
@@ -493,6 +494,21 @@ def conversations(
                 session.scalar(select(func.count(Conversation.id)).where(*filters)) or 0
             ),
         )
+        items = [
+            _conversation_payload(
+                row,
+                source_categories=categories.get(row.id, []),
+                segment_count=segment_counts.get(row.id, 0),
+                media_counts=media_counts[row.id],
+                corrected_segment_count=corrected_counts.get(row.id, 0),
+            )
+            for row in page
+        ]
+        attach_star_states(
+            session,
+            items,
+            lambda item: ("conversation", str(item["id"])),
+        )
         aggregate_memo.require_current()
 
     next_cursor: str | None = None
@@ -509,16 +525,7 @@ def conversations(
             value=value,
         )
     return {
-        "items": [
-            _conversation_payload(
-                row,
-                source_categories=categories.get(row.id, []),
-                segment_count=segment_counts.get(row.id, 0),
-                media_counts=media_counts[row.id],
-                corrected_segment_count=corrected_counts.get(row.id, 0),
-            )
-            for row in page
-        ],
+        "items": items,
         "page": {"limit": limit, "total": total, "next_cursor": next_cursor},
         "sort": {"field": sort, "direction": direction},
     }
@@ -586,15 +593,21 @@ def conversation_detail(request: Request, conversation_id: str) -> dict[str, Any
                 )
             )
         }
-
-    return {
-        "conversation": _conversation_payload(
+        conversation_payload = _conversation_payload(
             conversation,
             source_categories=source_categories,
             segment_count=len(segments),
             media_counts=media_counts[conversation.id],
             corrected_segment_count=corrected_counts.get(conversation.id, 0),
-        ),
+        )
+        attach_star_states(
+            session,
+            [conversation_payload],
+            lambda item: ("conversation", str(item["id"])),
+        )
+
+    return {
+        "conversation": conversation_payload,
         "segments": [
             {
                 "id": segment.id,
@@ -751,7 +764,7 @@ def _message_payloads(session: Session, rows: list[Message]) -> list[dict[str, A
         )
     }
 
-    return [
+    items = [
         {
             "id": row.id,
             "conversation_id": row.conversation_id,
@@ -782,6 +795,20 @@ def _message_payloads(session: Session, rows: list[Message]) -> list[dict[str, A
         }
         for row in rows
     ]
+    attach_star_states(
+        session,
+        items,
+        lambda item: ("message", str(item["id"])),
+    )
+    annotate_star_targets(
+        session,
+        (
+            (attachment, "attachment", str(attachment["id"]))
+            for message_attachments in attachments.values()
+            for attachment in message_attachments
+        ),
+    )
+    return items
 
 
 def _has_messages(

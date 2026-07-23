@@ -16,6 +16,10 @@ from meta_archive.cli import _mandatory_non_pass, app
 from meta_archive.paths import ArchiveLayout
 from meta_archive.services.consolidation import ConflictHoldingSummary
 from meta_archive.services.inventory import InventorySummary
+from meta_archive.services.search_index import (
+    SemanticIndexManualActivationError,
+    SemanticManualActivationSummary,
+)
 from meta_archive.services.support_library_scrub import (
     SupportLibraryScrubError,
     SupportLibraryScrubSummary,
@@ -59,6 +63,69 @@ def test_ingest_cli_exposes_private_owner_identity_option() -> None:
     assert "--owner-name" in result.output
     assert "Persisted in the private" in result.output
     assert "catalog" in result.output
+
+
+def test_index_semantic_cli_describes_bge_default_and_manual_activation_override() -> None:
+    result = CliRunner().invoke(app, ["index-semantic", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "bge-base-en-v1.5" in result.output
+    assert "Default/auto" in result.output
+    assert "activate-semantic-candidate" in result.output
+    assert "--acknowledge-failed-quality-gate" in result.output
+    assert "--reuse-windows" in result.output
+
+
+def test_manual_semantic_activation_cli_requires_acknowledgement_and_exact_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_id = "a" * 64
+    calls: list[tuple[str, bool]] = []
+    monkeypatch.setattr(cli_module, "_layout", lambda _archive_root: ArchiveLayout(tmp_path))
+    monkeypatch.setattr(cli_module, "_catalog", lambda _layout: object())
+
+    def activate(
+        _layout: object,
+        _engine: object,
+        *,
+        config_hash: str,
+        acknowledge_failed_quality_gate: bool,
+    ) -> SemanticManualActivationSummary:
+        calls.append((config_hash, acknowledge_failed_quality_gate))
+        if not acknowledge_failed_quality_gate:
+            raise SemanticIndexManualActivationError("Pass --acknowledge-failed-quality-gate")
+        return SemanticManualActivationSummary(
+            activation_job_id="activation-job",
+            config_hash=config_hash,
+            previous_active_config_id="b" * 64,
+            vector_table="text_windows_fixture",
+            window_count=12,
+            model_name="intfloat/e5-base-v2",
+            invalidated_conflict_run_count=1,
+        )
+
+    monkeypatch.setattr(cli_module, "activate_rejected_semantic_candidate", activate)
+    refused = CliRunner().invoke(
+        app,
+        ["activate-semantic-candidate", config_id, "--archive-root", str(tmp_path)],
+    )
+    activated = CliRunner().invoke(
+        app,
+        [
+            "activate-semantic-candidate",
+            config_id,
+            "--archive-root",
+            str(tmp_path),
+            "--acknowledge-failed-quality-gate",
+        ],
+    )
+
+    assert refused.exit_code == 2
+    assert "--acknowledge-failed-quality-gate" in refused.output
+    assert activated.exit_code == 0, activated.output
+    assert json.loads(activated.output)["config_hash"] == config_id
+    assert calls == [(config_id, False), (config_id, True)]
 
 
 def test_scrub_support_library_cli_emits_only_aggregate_results_and_redacts_errors(

@@ -280,12 +280,15 @@ def test_acceptance_server_gets_leave_catalog_and_mutable_tree_byte_exact(
         enrichment = client.get("/api/v1/enrichment/status")
         conflict = client.get("/api/v1/enrichment/conflict/status")
         activity = client.get("/api/v1/activity", params={"limit": 1})
+        stars = client.get("/api/v1/stars", params={"limit": 1})
         browser = client.get("/")
         head = client.head("/api/v1/acceptance/identity")
         mutations = [
             client.post("/api/v1/search/index", json={}),
             client.patch("/api/v1/settings", json={"timezone": "UTC"}),
             client.delete("/api/v1/saved-searches/missing"),
+            client.put("/api/v1/stars/message/fixture-message"),
+            client.delete("/api/v1/stars/message/fixture-message"),
             client.options("/api/v1/health"),
         ]
         with Session(app.state.engine) as session:
@@ -305,6 +308,8 @@ def test_acceptance_server_gets_leave_catalog_and_mutable_tree_byte_exact(
     assert enrichment.status_code == 200
     assert conflict.status_code == 200
     assert activity.status_code == 200
+    assert stars.status_code == 200
+    assert stars.json()["page"]["total"] == 0
     assert browser.status_code == 200
     assert head.status_code == 200
     assert all(response.status_code == 405 for response in mutations)

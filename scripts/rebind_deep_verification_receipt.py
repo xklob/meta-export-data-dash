@@ -67,6 +67,11 @@ _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _CARRIED_ACTUAL_RE = re.compile(r"carried-forward; prior_report_sha256=([0-9a-f]{64})\Z")
 _RENAME_NOREPLACE = 1
 _CARRIED_EXPECTED = "passing deep source-byte verification retained in the prior audit receipt"
+# This is deliberately a one-item compatibility bridge, not a general receipt-schema escape
+# hatch. ``stars.targets`` was added after the real archive's source bytes had already passed a
+# full deep scan. A legacy receipt may omit only this non-deep check, and the current catalog must
+# produce it successfully before any carried receipt is published.
+_LEGACY_ADDITIVE_NON_DEEP_CHECK_KEYS = frozenset({"stars.targets"})
 
 
 class ReceiptRebindError(RuntimeError):
@@ -246,7 +251,11 @@ def _validate_artifacts(value: object) -> dict[str, Any]:
     return cast(dict[str, Any], value)
 
 
-def _validate_checks(value: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+def _validate_checks(
+    value: object,
+    *,
+    allow_legacy_additive_missing: bool = False,
+) -> tuple[list[dict[str, object]], dict[str, object]]:
     if not isinstance(value, list) or not value:
         _fail("invalid-check-identities")
     checks: list[dict[str, object]] = []
@@ -279,7 +288,10 @@ def _validate_checks(value: object) -> tuple[list[dict[str, object]], dict[str, 
             _fail("invalid-required-check")
         if key == "deep.source_bytes":
             deep = normalized
-    if not SOURCE_RETIREMENT_REQUIRED_CHECK_KEYS.issubset(keys):
+    required_keys = SOURCE_RETIREMENT_REQUIRED_CHECK_KEYS
+    if allow_legacy_additive_missing:
+        required_keys -= _LEGACY_ADDITIVE_NON_DEEP_CHECK_KEYS
+    if not required_keys.issubset(keys):
         _fail("missing-required-check")
     if deep is None or deep.get("status") != "pass" or deep.get("mandatory") is not True:
         _fail("invalid-deep-check")
@@ -292,9 +304,21 @@ def _validate_checks(value: object) -> tuple[list[dict[str, object]], dict[str, 
 
 
 def _expected_gate(
-    checks: list[dict[str, object]], artifacts: Mapping[str, object]
+    checks: list[dict[str, object]],
+    artifacts: Mapping[str, object],
+    *,
+    allow_legacy_additive_missing: bool = False,
 ) -> dict[str, object]:
     non_pass = mandatory_non_pass_checks(checks)
+    if allow_legacy_additive_missing:
+        non_pass = [
+            check
+            for check in non_pass
+            if not (
+                check.get("status") == "missing"
+                and check.get("key") in _LEGACY_ADDITIVE_NON_DEEP_CHECK_KEYS
+            )
+        ]
     source = artifacts.get("source_manifests")
     marker = artifacts.get("library_marker")
     artifacts_complete = (
@@ -323,19 +347,29 @@ def _expected_gate(
 
 
 def _validate_receipt(
-    payload: bytes, *, current_artifacts: Mapping[str, object]
+    payload: bytes,
+    *,
+    current_artifacts: Mapping[str, object],
+    allow_legacy_additive_missing: bool = False,
 ) -> tuple[dict[str, Any], list[dict[str, object]], dict[str, object]]:
     report = _strict_json(payload)
     if frozenset(report) != _REPORT_KEYS or type(report.get("schema_version")) is not int:
         _fail("invalid-report-schema")
     if report["schema_version"] != 1 or not isinstance(report.get("generated_at"), str):
         _fail("invalid-report-schema")
-    checks, deep = _validate_checks(report.get("checks"))
+    checks, deep = _validate_checks(
+        report.get("checks"),
+        allow_legacy_additive_missing=allow_legacy_additive_missing,
+    )
     artifacts = _validate_artifacts(report.get("artifacts"))
     if artifacts != current_artifacts:
         _fail("artifact-identity-changed")
     gate = report.get("gate")
-    expected_gate = _expected_gate(checks, artifacts)
+    expected_gate = _expected_gate(
+        checks,
+        artifacts,
+        allow_legacy_additive_missing=allow_legacy_additive_missing,
+    )
     if (
         not isinstance(gate, dict)
         or frozenset(gate) != _GATE_KEYS
@@ -411,6 +445,7 @@ def _validate_provenance_chain(
         _report, _checks, current_deep = _validate_receipt(
             prior.payload,
             current_artifacts=current_artifacts,
+            allow_legacy_additive_missing=True,
         )
     _fail("carried-provenance-too-deep")
 
@@ -467,7 +502,10 @@ def _validate_current_checks(
     prior_non_deep_keys = {
         str(check.get("key")) for check in prior_checks if check.get("key") != "deep.source_bytes"
     }
-    if keys != prior_non_deep_keys:
+    expected_keys = prior_non_deep_keys | (
+        _LEGACY_ADDITIVE_NON_DEEP_CHECK_KEYS - prior_non_deep_keys
+    )
+    if keys != expected_keys:
         _fail("check-identity-changed")
     combined = [*normalized, dict(prior_deep)]
     if mandatory_non_pass_checks(combined):
@@ -708,6 +746,7 @@ def rebind_deep_receipt(archive_root: Path) -> bool:
                 _prior_report, prior_checks, prior_deep = _validate_receipt(
                     prior.payload,
                     current_artifacts=artifacts_before,
+                    allow_legacy_additive_missing=True,
                 )
                 _validate_provenance_chain(
                     reports_descriptor,

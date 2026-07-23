@@ -55,6 +55,10 @@ import type {
   OverviewResponse,
   PeopleResponse,
   SortDirection,
+  StarCategory,
+  StarState,
+  StarTarget,
+  StarsResponse,
   SettingsPatch,
   SettingsResponse,
   RagAnswerResponse,
@@ -320,6 +324,13 @@ export interface SearchQuery {
   cursor?: string
 }
 
+export interface StarsQuery {
+  category?: StarCategory
+  direction?: SortDirection
+  limit?: number
+  cursor?: string
+}
+
 export interface RagQuestion {
   question: string
   searchMode?: 'semantic' | 'hybrid'
@@ -367,6 +378,25 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(settings),
     }),
+  stars: (options: StarsQuery = {}) => {
+    const query = new URLSearchParams({
+      category: options.category ?? 'all',
+      direction: options.direction ?? 'desc',
+      limit: String(options.limit ?? 50),
+    })
+    addOptional(query, 'cursor', options.cursor)
+    return request<StarsResponse>(`/stars?${query}`)
+  },
+  star: (target: StarTarget) =>
+    request<{ star_target: StarTarget; star: StarState; created: boolean }>(
+      `/stars/${encodeURIComponent(target.target_type)}/${encodeURIComponent(target.target_id)}`,
+      { method: 'PUT' },
+    ),
+  unstar: (target: StarTarget) =>
+    request<void>(
+      `/stars/${encodeURIComponent(target.target_type)}/${encodeURIComponent(target.target_id)}`,
+      { method: 'DELETE' },
+    ),
   search: (options: SearchQuery) => {
     const query = new URLSearchParams({ q: options.q, mode: options.mode ?? 'keyword' })
     addOptional(query, 'entity_type', options.entityType ?? 'all')

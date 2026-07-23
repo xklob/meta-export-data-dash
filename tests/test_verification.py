@@ -4,11 +4,20 @@ import json
 from dataclasses import fields
 
 from sqlalchemy import Engine
+from sqlalchemy.orm import Session
 
 from meta_archive.baseline import (
     AUDITED_BASELINE_MANIFEST_RELATIVE_PATH,
     AuditedBaseline,
     archive_identity_sha256,
+)
+from meta_archive.models import (
+    Conversation,
+    ConversationCorrection,
+    ConversationCorrectionSegment,
+    ConversationSegment,
+    ConversationSegmentOverride,
+    Star,
 )
 from meta_archive.paths import ArchiveLayout
 from meta_archive.services.inventory import scan_archive
@@ -35,6 +44,42 @@ def _write_zero_baseline(layout: ArchiveLayout) -> None:
         encoding="utf-8",
     )
     path.chmod(0o600)
+
+
+def _verification_conversation(identifier: str, title: str) -> Conversation:
+    return Conversation(
+        id=identifier,
+        conversation_key=f"fixture:{identifier}",
+        title_raw=title,
+        title_display=title,
+        title_search=title.casefold(),
+        conversation_type="direct",
+        primary_category="inbox",
+    )
+
+
+def _conversation_snapshot(identifier: str, title: str) -> dict[str, object]:
+    return {
+        "id": identifier,
+        "conversation_key": f"fixture:{identifier}",
+        "title_raw": title,
+        "title_display": title,
+        "title_search": title.casefold(),
+        "conversation_type": "direct",
+        "primary_category": "inbox",
+        "participant_count": 0,
+        "first_activity_ms": None,
+        "last_activity_ms": None,
+        "message_count": 0,
+        "sent_count": 0,
+        "received_count": 0,
+        "attachment_count": 0,
+        "unique_attachment_count": 0,
+        "attachment_bytes": 0,
+        "active_days": 0,
+        "completeness": "unknown",
+        "deleted_at": None,
+    }
 
 
 def test_synthetic_archives_do_not_inherit_real_export_baselines(
@@ -130,3 +175,203 @@ def test_mandatory_non_pass_checks_fail_closed_for_pending_and_missing_keys() ->
     non_pass = mandatory_non_pass_checks(checks[:-1])
     assert any(check["status"] == "pending" for check in non_pass)
     assert any(check["status"] == "missing" for check in non_pass)
+
+
+def test_verification_fails_for_an_unresolvable_star_target(
+    archive_layout: ArchiveLayout,
+    catalog_engine: Engine,
+) -> None:
+    with Session(catalog_engine) as session, session.begin():
+        session.add(
+            Star(
+                id="missing-star-target",
+                target_type="message",
+                target_id="f" * 64,
+            )
+        )
+
+    checks = verify_catalog(archive_layout, catalog_engine)
+
+    stars = next(check for check in checks if check["key"] == "stars.targets")
+    assert stars["status"] == "fail"
+    assert stars["expected"] == 0
+    assert stars["actual"] == 1
+    assert stars["detail"] == "active=0, latent=0, missing=1"
+
+
+def test_globally_broken_merge_correction_does_not_mask_missing_star(
+    archive_layout: ArchiveLayout,
+    catalog_engine: Engine,
+) -> None:
+    before_a = "a" * 64
+    before_b = "b" * 64
+    destination_id = "c" * 64
+    segment_a = "d" * 64
+    segment_b = "e" * 64
+    correction_id = "broken-multi-source-merge"
+    with Session(catalog_engine) as session, session.begin():
+        session.add(_verification_conversation(destination_id, "Merged"))
+        session.flush()
+        session.add_all(
+            [
+                ConversationSegment(
+                    id=segment_a,
+                    conversation_id=destination_id,
+                    thread_path="inbox/a",
+                    title_raw="A",
+                    title_display="A",
+                    title_search="a",
+                    source_category="inbox",
+                ),
+                ConversationSegment(
+                    id=segment_b,
+                    conversation_id=destination_id,
+                    thread_path="inbox/b",
+                    title_raw="B",
+                    title_display="B",
+                    title_search="b",
+                    source_category="inbox",
+                ),
+                ConversationCorrection(
+                    id=correction_id,
+                    action="merge",
+                    status="active",
+                    request_json={},
+                    before_json={
+                        "conversations": [
+                            _conversation_snapshot(before_a, "A"),
+                            _conversation_snapshot(before_b, "B"),
+                        ]
+                    },
+                    after_json={},
+                    catalog_revision="1" * 64,
+                    result_revision="2" * 64,
+                    effect_json={},
+                ),
+                Star(
+                    id="star-before-a",
+                    target_type="conversation",
+                    target_id=before_a,
+                ),
+            ]
+        )
+        session.flush()
+        session.add_all(
+            [
+                ConversationCorrectionSegment(
+                    correction_id=correction_id,
+                    segment_id=segment_a,
+                    thread_path="inbox/a",
+                    before_conversation_id=before_a,
+                    after_conversation_id=destination_id,
+                ),
+                ConversationCorrectionSegment(
+                    correction_id=correction_id,
+                    segment_id=segment_b,
+                    thread_path="inbox/b",
+                    before_conversation_id=before_b,
+                    after_conversation_id=destination_id,
+                ),
+                ConversationSegmentOverride(
+                    segment_id=segment_a,
+                    base_conversation_id=before_a,
+                    conversation_id=destination_id,
+                    correction_id=correction_id,
+                ),
+            ]
+        )
+
+    checks = verify_catalog(archive_layout, catalog_engine)
+
+    stars = next(check for check in checks if check["key"] == "stars.targets")
+    assert stars["status"] == "fail"
+    assert stars["detail"] == "active=0, latent=0, missing=1"
+
+
+def test_chained_merge_star_is_latent_when_actual_revert_preconditions_hold(
+    archive_layout: ArchiveLayout,
+    catalog_engine: Engine,
+) -> None:
+    base_id = "1" * 64
+    before_id = "2" * 64
+    destination_id = "3" * 64
+    segment_id = "4" * 64
+    correction_id = "chained-merge"
+    with Session(catalog_engine) as session, session.begin():
+        session.add(_verification_conversation(destination_id, "Destination"))
+        session.flush()
+        session.add_all(
+            [
+                ConversationSegment(
+                    id=segment_id,
+                    conversation_id=destination_id,
+                    thread_path="inbox/chained",
+                    title_raw="Chained",
+                    title_display="Chained",
+                    title_search="chained",
+                    source_category="inbox",
+                ),
+                ConversationCorrection(
+                    id=correction_id,
+                    action="merge",
+                    status="active",
+                    request_json={},
+                    before_json={
+                        "conversations": [
+                            _conversation_snapshot(before_id, "Intermediate"),
+                            _conversation_snapshot(destination_id, "Destination"),
+                        ]
+                    },
+                    after_json={},
+                    catalog_revision="5" * 64,
+                    result_revision="6" * 64,
+                    effect_json={},
+                ),
+                Star(
+                    id="star-intermediate",
+                    target_type="conversation",
+                    target_id=before_id,
+                ),
+            ]
+        )
+        session.flush()
+        session.add_all(
+            [
+                ConversationCorrectionSegment(
+                    correction_id=correction_id,
+                    segment_id=segment_id,
+                    thread_path="inbox/chained",
+                    before_conversation_id=before_id,
+                    after_conversation_id=destination_id,
+                    previous_correction_id="earlier-split",
+                ),
+                ConversationSegmentOverride(
+                    segment_id=segment_id,
+                    # A prior split owns the base identity. Revert does not require it to
+                    # equal the intermediate conversation restored by this merge.
+                    base_conversation_id=base_id,
+                    conversation_id=destination_id,
+                    correction_id=correction_id,
+                ),
+            ]
+        )
+
+    checks = verify_catalog(archive_layout, catalog_engine)
+
+    stars = next(check for check in checks if check["key"] == "stars.targets")
+    assert stars["status"] == "pass"
+    assert stars["detail"] == "active=0, latent=1, missing=0"
+
+
+def test_stars_target_check_is_mandatory_for_source_retirement(
+    archive_layout: ArchiveLayout,
+    catalog_engine: Engine,
+) -> None:
+    checks = verify_catalog(archive_layout, catalog_engine)
+    without_stars = [check for check in checks if check["key"] != "stars.targets"]
+
+    non_pass = mandatory_non_pass_checks(without_stars)
+
+    assert any(
+        check["key"] == "stars.targets" and check["status"] == "missing" for check in non_pass
+    )

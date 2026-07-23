@@ -11,15 +11,17 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from meta_archive.api.main import create_app
-from meta_archive.api.schemas import RagStructuredAnswer
+from meta_archive.api.schemas import RagStructuredAnswer, SemanticIndexRequest
 from meta_archive.api.search_routes import _public_semantic_evaluation, _scope_hash
 from meta_archive.database import create_catalog_engine, run_migrations
-from meta_archive.models import Job, Message, RagAudit
+from meta_archive.models import Job, Message, RagAudit, SemanticIndexConfig
 from meta_archive.paths import ArchiveLayout
+from meta_archive.services import search_index as search_index_service
 from meta_archive.services.activity_importer import import_activities
 from meta_archive.services.inventory import scan_archive
 from meta_archive.services.message_importer import import_messages
@@ -95,6 +97,25 @@ def _assert_search_result_contract(item: dict[str, Any]) -> None:
     assert item["deletion_state"] == "retained"
     assert item["provenance"]["entity_type"] == item["entity_type"]
     assert item["provenance"]["source_id"] == item["source_id"]
+
+
+def test_semantic_index_request_accepts_and_documents_bge_base_default() -> None:
+    request = SemanticIndexRequest(model="bge-base-en-v1.5", rebuild_windows=False)
+    schema_text = json.dumps(SemanticIndexRequest.model_json_schema(), sort_keys=True)
+
+    assert request.model == "bge-base-en-v1.5"
+    assert request.rebuild_windows is False
+    assert "default auto policy selects bge-base-en-v1.5" in schema_text
+    assert "manual acceptance override is intentionally unavailable over HTTP" in schema_text
+
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        SemanticIndexRequest.model_validate(
+            {
+                "model": "bge-base-en-v1.5",
+                "rebuild_windows": False,
+                "manual_activation_override": True,
+            }
+        )
 
 
 def test_public_semantic_evaluation_redacts_development_calibration_details() -> None:
@@ -278,7 +299,10 @@ class FakeOpenAI:
 
 
 @pytest.fixture
-def stage3_client(tmp_path: Path) -> Iterator[TestClient]:
+def stage3_client(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[TestClient]:
     layout = ArchiveLayout(tmp_path / "meta-backup-stage3")
     shutil.copytree(MESSAGE_FIXTURES, layout.root)
     shutil.copytree(ACTIVITY_FIXTURES, layout.root / "activity-package")
@@ -288,6 +312,26 @@ def stage3_client(tmp_path: Path) -> Iterator[TestClient]:
     scan_archive(layout, engine, hash_files=True)
     import_messages(layout, engine)
     import_activities(layout, engine)
+    monkeypatch.setattr(
+        search_index_service,
+        "_direct_conflict_development_evaluation",
+        lambda *_args, **_kwargs: {
+            **search_index_service._direct_conflict_calibration_base(),
+            "status": "passed",
+            "passed": True,
+            "feedback_revision": {
+                "version": "fixture-direct-conflict-feedback-v1",
+                "sha256": "a" * 64,
+                "row_count": 20,
+            },
+            "feedback_revision_stable_during_evaluation": True,
+            "model_metadata": {
+                "classifier": "fixture",
+                "ranker_version": "fixture-direct-conflict-ranker-v1",
+            },
+            "private_material_fingerprint_sha256": "b" * 64,
+        },
+    )
     build_semantic_index(layout, engine, embedder=FixtureEmbedder(), batch_size=4)
     engine.dispose()
 
@@ -480,6 +524,93 @@ def test_keyword_exact_semantic_and_hybrid_search_with_scoped_pagination(
     )
     assert after_delete.status_code == 200
     assert message_window["id"] not in {item["id"] for item in after_delete.json()["items"]}
+
+
+def test_search_results_star_the_canonical_source_identity(stage3_client: TestClient) -> None:
+    initial = stage3_client.get(
+        "/api/v1/search",
+        params={"q": "fixture", "mode": "keyword", "limit": 100},
+    )
+    assert initial.status_code == 200
+    source = next(
+        item for item in initial.json()["items"] if item["entity_type"] in {"message", "activity"}
+    )
+    target_type = source["entity_type"]
+    target_id = source["source_id"]
+    assert source["id"] == f"{target_type}:{target_id}"
+
+    created = stage3_client.put(f"/api/v1/stars/{target_type}/{target_id}")
+    assert created.status_code == 200
+    refreshed = stage3_client.get(
+        "/api/v1/search",
+        params={"q": "fixture", "mode": "keyword", "limit": 100},
+    )
+    assert refreshed.status_code == 200
+    starred = next(item for item in refreshed.json()["items"] if item["id"] == source["id"])
+    assert starred["star_target"] == {
+        "target_type": target_type,
+        "target_id": target_id,
+    }
+    assert starred["star"] == created.json()["star"]
+
+
+def test_manual_override_argument_uses_cross_encoder_fallback_over_http(
+    stage3_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with Session(stage3_client.app.state.engine) as session, session.begin():
+        active = session.scalar(
+            select(SemanticIndexConfig).where(
+                SemanticIndexConfig.active.is_(True),
+                SemanticIndexConfig.status == "ready",
+            )
+        )
+        assert active is not None
+        audit = json.loads(json.dumps(active.audit_json))
+        audit.pop("accepted_semantic_ir_evaluation", None)
+        audit["manual_activation_override"] = {
+            "version": "semantic-manual-activation-v1",
+            "candidate_config_id": active.id,
+            "acknowledged_failed_quality_gate": True,
+            "source": "cli_only",
+            "activation_job_id": "fixture-manual-activation",
+        }
+        active.audit_json = audit
+
+    def forbid_development_feedback(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("manual fallback must not require development feedback")
+
+    monkeypatch.setattr(
+        "meta_archive.api.search_routes.development_feedback_revision_payload",
+        forbid_development_feedback,
+    )
+    monkeypatch.setattr(
+        "meta_archive.services.search.development_feedback_revision_payload",
+        forbid_development_feedback,
+    )
+
+    for mode in ("semantic", "hybrid"):
+        response = stage3_client.get(
+            "/api/v1/search",
+            params={"q": "argument", "mode": mode, "limit": 10},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["items"]
+        fallback = payload["index_config"]["direct_conflict_ranker"]
+        assert fallback == {
+            "status": "normal_cross_encoder_fallback",
+            "specialized_ranker_used": False,
+            "reason": "manual_override_without_accepted_direct_conflict_calibration",
+            "trigger": "exact_normalized_literal",
+            "pipeline": "cosine_retrieval_then_local_cross_encoder",
+            "manual_activation_version": "semantic-manual-activation-v1",
+            "manual_activation_job_id": "fixture-manual-activation",
+        }
+        assert all(
+            item["ranking_provenance"]["literal_direct_conflict"] == fallback
+            for item in payload["items"]
+        )
 
 
 def test_semantic_search_reports_an_unavailable_reranker_without_cosine_fallback(
@@ -1046,6 +1177,14 @@ def test_async_index_route_uses_injected_backend_invalidates_cursor_and_recovers
     monkeypatch.setattr(
         "meta_archive.services.search_index.FastEmbedTextEmbedder",
         forbid_default_backend,
+    )
+    monkeypatch.setattr(
+        search_index_service,
+        "_active_incumbent_comparison",
+        lambda *_args, **_kwargs: search_index_service._semantic_upgrade_metric_comparison(
+            {"recall_at_k": 0.73, "mrr": 0.63, "ndcg_at_k": 0.61},
+            {"recall_at_k": 0.70, "mrr": 0.60, "ndcg_at_k": 0.58},
+        ),
     )
     stage3_client.app.state.semantic_index_embedder_factory = recording_factory
     created = stage3_client.post(

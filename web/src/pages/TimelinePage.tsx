@@ -5,6 +5,7 @@ import { type CSSProperties, type FormEvent, useEffect, useMemo, useRef, useStat
 import { BoundedResultsHint } from '../components/BoundedResultsHint'
 import { CoverageNotice } from '../components/CoverageNotice'
 import { CursorWindowControls } from '../components/CursorWindowControls'
+import { StarButton } from '../components/StarButton'
 import { EmptyState, ErrorState, PageHeading, PageLoading, StatusBadge } from '../components/ui'
 import { api, type TimelineQuery } from '../lib/api'
 import type { TimelineItem } from '../lib/contracts'
@@ -33,9 +34,16 @@ function TimelineEntry({ item, timezone, position, setSize }: { item: TimelineIt
         <p>{item.content || 'No exported body text is available for this record.'}</p>
         <footer>
           <span>{sentenceCase(item.category)} · {sentenceCase(item.subtype)}</span>
-          <a className="button button--secondary button--compact" href={item.jump.href}>
-            {item.entity_type === 'message' ? 'Jump to conversation' : 'Open source point'}
-          </a>
+          <span className="timeline-entry__actions">
+            <StarButton
+              target={item.star_target ?? { target_type: item.entity_type, target_id: item.entity_id }}
+              star={item.star}
+              label={`${item.entity_type} ${item.title || item.sender || sentenceCase(item.subtype)}`}
+            />
+            <a className="button button--secondary button--compact" href={item.jump.href}>
+              {item.entity_type === 'message' ? 'Jump to conversation' : 'Open source point'}
+            </a>
+          </span>
         </footer>
       </div>
     </article>
