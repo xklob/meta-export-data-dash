@@ -1,15 +1,67 @@
 # Meta Archive Explorer
 
-Meta Archive Explorer is a private, localhost-only application for consolidating and browsing
-a Facebook account export. The implementation follows [PLAN.md](PLAN.md).
+Meta Archive Explorer is a local-first application for consolidating, validating, searching, and
+browsing Facebook account exports. It turns one or more export chunks into a provenance-preserving
+catalog, a content-addressed blob store, and a responsive localhost-only interface.
 
-The source export is never committed. Runtime catalogs, content-addressed blobs, generated
-library views, screenshots, models, and deletion quarantine are also excluded from Git.
+![Archive analytics rendered from synthetic fixture data](web/tests/e2e/stage4.spec.ts-snapshots/stage4-analytics-viewport-linux.png)
 
-Stages 1–5 are implemented for the current prepared archive. Their final real-export
-reconciliation is intentionally bounded and sampled as documented below. Image/video semantic
-classification, OCR, zero-shot media tags, and the Memes dashboard remain excluded and require a
-new, explicit user approval.
+_The screenshot above is generated from synthetic test fixtures. No real export data is committed._
+
+## Highlights
+
+- Deterministic multi-chunk consolidation with hashing, deduplication, collision handling, and
+  reconstruction provenance.
+- Conversation, media, activity, people, event, support, timeline, and analytics views that keep
+  incomplete source coverage visible.
+- Keyword, exact, semantic, and hybrid search with source jumps, local model provenance, and
+  optional cited cloud RAG.
+- Local audio transcription, attachment-text extraction, language signals, topic clusters, and
+  deliberately non-authoritative conflict-review aids.
+- Revision-bound starring, reversible quarantine, restore, and explicit hard-purge workflows.
+- A privacy boundary built around loopback-only serving, one-time authentication, CSRF protection,
+  path confinement, owner-only runtime artifacts, and cloud processing that is off by default.
+
+## Architecture
+
+```text
+Meta export chunks
+        |
+        v
+consolidation + verification --> content-addressed blobs + provenance manifests
+        |
+        v
+SQLite catalog + FTS5 + local vector index
+        |
+        v
+FastAPI / Typer backend --> React / TypeScript browser UI on 127.0.0.1
+```
+
+| Layer | Main components |
+|---|---|
+| Backend | Python 3.12, FastAPI, Typer, SQLAlchemy, Alembic |
+| Frontend | React 19, TypeScript, Vite, TanStack Router/Query/Table, ECharts |
+| Search and enrichment | SQLite FTS5, LanceDB, FastEmbed, faster-whisper, Transformers |
+| Verification | Pytest, Hypothesis, Vitest, Testing Library, Playwright, Axe |
+
+The source export is never committed. Runtime catalogs, blobs, generated library views, models,
+screenshots from real-data review, and deletion quarantine are excluded from Git. The repository's
+tracked fixtures and visual baselines are synthetic. See [SECURITY.md](SECURITY.md) for the data
+handling and vulnerability-reporting policy.
+
+Stages 1-5 are implemented. Image/video semantic classification, OCR, zero-shot media tags, and a
+Memes dashboard remain intentionally outside the implemented scope. The detailed data contracts,
+invariants, and delivery rationale live in [PLAN.md](PLAN.md).
+
+## Repository map
+
+- `src/meta_archive/` contains the CLI, API, models, importers, search, verification, and deletion
+  services.
+- `web/` contains the React application plus unit, accessibility, and browser tests.
+- `tests/fixtures/` contains synthetic export fragments that exercise observed Meta schema shapes.
+- `alembic/` contains the catalog migration history.
+- `scripts/` contains bounded real-export acceptance and verification tooling.
+- [CONTRIBUTING.md](CONTRIBUTING.md) documents the development and validation workflow.
 
 ## Starred items
 
@@ -170,9 +222,17 @@ pnpm --dir web run test:e2e:destructive
 The destructive browser suite never accepts an archive path. Its helper creates a fresh synthetic
 archive inside an owner-private temporary directory, runs the real authenticated UI and API through
 preview, quarantine, disappearance, and restore, and then asserts that the entire temporary tree
-was removed. It must not be adapted to point at the private production export.
+was removed. It must not be adapted to point at a real export.
 
-## Private real-export acceptance evidence
+## Real-export acceptance protocol
+
+Real-export acceptance runs only against an ignored, owner-private archive. Its reports contain
+aggregate evidence, while screenshots and traces remain local and must never be committed.
+
+<details>
+<summary>Detailed local acceptance workflow and evidence contract</summary>
+
+<br>
 
 Run final acceptance only after all derived-data workers have finished, the semantic index is
 active, analytics are warm, and the current stable catalog has a passing deep-verification
@@ -532,11 +592,13 @@ artifact roots, refuse symlinked token/output targets, and never overwrite prior
 new output directory for every review iteration rather than deleting or replacing an earlier
 report.
 
-Axe is an automated WCAG subset, not proof of every WCAG 2.2 AA success criterion. The mandatory
-independent UI/UX review in [PLAN.md](PLAN.md) must still inspect these local desktop/mobile
+Axe is an automated WCAG subset, not proof of every WCAG 2.2 AA success criterion. The iterative
+UI/UX review in [PLAN.md](PLAN.md) must still inspect these local desktop/mobile
 screenshots and traces, exercise keyboard and screen-reader structure and the stage user stories,
 record defects, and repeat with a fresh evidence directory until no test failure or high/medium UI
 issue remains. Never attach real-export screenshots or traces to an issue, commit, or cloud review.
+
+</details>
 
 ## Direct-history identity corrections
 

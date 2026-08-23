@@ -56,8 +56,7 @@ class FeedbackCohortSelector:
             row.evaluation_split in self.evaluation_splits
             and row.search_mode in self.search_modes
             and (
-                self.evaluation_intents is None
-                or row.evaluation_intent in self.evaluation_intents
+                self.evaluation_intents is None or row.evaluation_intent in self.evaluation_intents
             )
         )
 
@@ -326,9 +325,7 @@ def _load_window_identities(
         conversation_ids = (
             frozenset((str(window.conversation_id),)) if window.conversation_id else frozenset()
         )
-        source_roots = (
-            frozenset() if conversation_ids else _private_non_conversation_roots(window)
-        )
+        source_roots = frozenset() if conversation_ids else _private_non_conversation_roots(window)
         if len(source_roots) > 1:
             invalid_counts["ambiguous_source_root"] += 1
         if not conversation_ids and not source_roots:
@@ -533,10 +530,7 @@ def _audit_material_digest(
             _cohort_material_digest("test", test),
             _aggregate_digest(
                 "overlap_digests",
-                (
-                    f"{key}:{value}"
-                    for key, value in sorted(overlap_digests.items())
-                ),
+                (f"{key}:{value}" for key, value in sorted(overlap_digests.items())),
             ),
             _aggregate_digest(
                 "invalid_counts",
@@ -595,13 +589,9 @@ def audit_semantic_feedback_split(
         "query_digest": forbidden_queries,
         **identity_intersections,
     }
-    overlap_counts = {
-        key: len(value)
-        for key, value in intersections.items()
-    }
+    overlap_counts = {key: len(value) for key, value in intersections.items()}
     overlap_digests = {
-        key: _aggregate_digest(f"overlap:{key}", value)
-        for key, value in intersections.items()
+        key: _aggregate_digest(f"overlap:{key}", value) for key, value in intersections.items()
     }
 
     failure_codes: list[str] = []
@@ -621,9 +611,7 @@ def audit_semantic_feedback_split(
             "development_query_digests": len(development_material.private_query_digests),
             "development_results": len(development_material.private_result_ids),
             "development_windows": len(development_material.private_window_ids),
-            "development_source_messages": len(
-                development_material.private_source_message_ids
-            ),
+            "development_source_messages": len(development_material.private_source_message_ids),
             "development_conversations": len(development_material.private_conversation_ids),
             "development_non_conversation_source_roots": len(
                 development_material.private_non_conversation_source_roots

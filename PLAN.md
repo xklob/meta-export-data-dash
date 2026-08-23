@@ -1,6 +1,9 @@
-# Meta Archive Explorer — Implementation Plan
+# Meta Archive Explorer - Implementation Plan
 
-> **Status:** Stages 1–5 are implemented for the current prepared archive. The stable automated suites and fresh bounded schema-5 browser pass are accepted, and two bounded `production-spot-check-v2` reconciliation reports passed all 23 checks with zero blockers. Their final supervisor receipts reported a cleanup false-positive in the leader-shim/`uv` ancestor probe even though both postflights were externally clean; the corrected bounded-ancestor probe is covered by real `uv run` integration tests rather than a third archive run. Reconciliation is deliberately sampled, so unsampled rows and cursor positions are not claimed verified. Stage 6 remains deferred and requires the user's separate, explicit approval.
+> **Status:** Stages 1-5 are implemented and covered by synthetic automated suites plus bounded,
+> local real-export acceptance. Reconciliation is deliberately sampled, so unsampled rows and
+> cursor positions are not claimed verified. Stage 6 image/video semantic analysis remains an
+> intentionally separate, opt-in phase.
 
 ## 1. Summary and audited baseline
 
@@ -24,7 +27,7 @@ Accepted defaults:
 - Store timestamps in UTC; display and chart in configurable IANA timezones, defaulting to `America/New_York`.
 - Default attachment statistics to send/attachment occurrences, with a unique-blob toggle.
 - Keep unknown dates null; never substitute extraction-day mtimes.
-- Defer image classification until a later explicit instruction after every other stage is complete.
+- Keep image classification behind a separate opt-in gate after every other stage is complete.
 
 ## 2. Architecture, data contracts, and consolidation
 
@@ -254,14 +257,14 @@ archive-local private baseline manifest rather than committed source:
 - On the audited machine after warm-up: p95 list/date-jump API queries ≤500 ms, FTS top-50 ≤1 second, semantic top-50 ≤2 seconds, and initial local page content ≤2.5 seconds. OpenAI latency is excluded.
 - Target WCAG 2.2 AA, using automated Axe checks plus independent keyboard, focus, contrast, reduced-motion, and screen-reader-structure review.
 
-### Mandatory sub-agent UI/UX loop
+### Iterative UI/UX acceptance loop
 
 At the end of every implementation stage:
 
-1. A sub-agent launches the acceptance-read-only application against the real archive inside a bounded no-swap cgroup with whole-process-tree cleanup.
-2. It executes all stage user stories and captures local screenshots/traces at desktop and mobile viewports in a fresh owner-only evidence directory.
-3. It reviews visual hierarchy, density, clipping, scrolling, loading/empty/error states, filter clarity, accessibility, media behavior, jump correctness, and backing-data reconciliation.
-4. The primary implementation agent fixes every discovered bug or material UX issue and reruns affected tests.
+1. Launch the acceptance-read-only application against the real archive inside a bounded no-swap cgroup with whole-process-tree cleanup.
+2. Execute all stage user stories and capture local screenshots/traces at desktop and mobile viewports in a fresh owner-only evidence directory.
+3. Review visual hierarchy, density, clipping, scrolling, loading/empty/error states, filter clarity, accessibility, media behavior, jump correctness, and backing-data reconciliation.
+4. Fix every discovered bug or material UX issue and rerun affected tests.
 5. A fresh complete review pass repeats until no test failures, missing user stories, or high/medium-severity UI/UX defects remain; partial or resource-killed runs never count.
 6. Only then may the next stage begin.
 
@@ -269,7 +272,7 @@ Real-data screenshots are permitted, as selected, but remain local, mode-restric
 
 ### Final gates and planning artifact
 
-- No implementation begins without an explicit user instruction.
-- The image/video semantic phase always requires a second, later explicit approval.
+- Implementation changes must preserve the privacy, provenance, and fail-closed acceptance gates above.
+- The image/video semantic phase remains separately gated and opt-in.
 - No `sudo`, privilege escalation, Docker dependency, or automatic system-package installation is permitted.
 - This planning artifact is stored as `PLAN.md` at the repository root.

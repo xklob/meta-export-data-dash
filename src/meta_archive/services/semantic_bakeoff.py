@@ -154,9 +154,7 @@ class BakeoffManifest:
     def safe_summary(self) -> dict[str, Any]:
         label_counts = {
             label: sum(
-                judgment.label == label
-                for group in self.queries
-                for judgment in group.judgments
+                judgment.label == label for group in self.queries for judgment in group.judgments
             )
             for label in sorted(SUPPORTED_LABELS)
         }
@@ -360,8 +358,7 @@ def _active_control_config(connection: sqlite3.Connection) -> tuple[str, int]:
     implementation = audit.get("embedding_implementation")
     expected_implementation = embedding_implementation_identity(control)
     if not isinstance(implementation, dict) or any(
-        implementation.get(key) != expected
-        for key, expected in expected_implementation.items()
+        implementation.get(key) != expected for key, expected in expected_implementation.items()
     ):
         raise BakeoffError("active_e5_control_implementation_mismatch")
     window_count = int(row["window_count"])
@@ -397,9 +394,8 @@ def _filter_scope(value: object, expected_sha256: str) -> BakeoffFilterScope:
     integer_values: dict[str, int | None] = {}
     for key in ("from_ms", "to_ms"):
         value_at_key = raw.get(key)
-        if (
-            value_at_key is not None
-            and (not isinstance(value_at_key, int) or isinstance(value_at_key, bool))
+        if value_at_key is not None and (
+            not isinstance(value_at_key, int) or isinstance(value_at_key, bool)
         ):
             raise BakeoffError("feedback_filter_scope_invalid")
         integer_values[key] = value_at_key
@@ -447,9 +443,7 @@ def _development_query_groups(
             "development_feedback_row_cap_exceeded",
             counts={"row_cap": maximum_rows},
         )
-    grouped: dict[
-        tuple[str, str, str, str], tuple[BakeoffFilterScope, list[_Judgment]]
-    ] = {}
+    grouped: dict[tuple[str, str, str, str], tuple[BakeoffFilterScope, list[_Judgment]]] = {}
     for row in rows:
         query_sha256 = str(row["query_sha256"])
         query_text = str(row["query_text"])
@@ -611,9 +605,7 @@ def _active_window_metadata(
 
 def _stable_hash(salt: str, private_value: str) -> str:
     return hashlib.sha256(
-        f"{BAKEOFF_SCHEMA_VERSION}\0{salt}\0{private_value}".encode(
-            "utf-8", errors="surrogatepass"
-        )
+        f"{BAKEOFF_SCHEMA_VERSION}\0{salt}\0{private_value}".encode("utf-8", errors="surrogatepass")
     ).hexdigest()
 
 
@@ -625,9 +617,7 @@ def _stratified_stable_pick(
 ) -> list[_WindowMetadata]:
     if limit <= 0 or not candidates:
         return []
-    by_stratum: dict[tuple[str, str, str], list[tuple[str, _WindowMetadata]]] = defaultdict(
-        list
-    )
+    by_stratum: dict[tuple[str, str, str], list[tuple[str, _WindowMetadata]]] = defaultdict(list)
     for candidate in candidates:
         by_stratum[_window_stratum(candidate)].append(
             (_stable_hash(salt, candidate.private_window_id), candidate)
@@ -705,20 +695,12 @@ def _matches_filter(window: _WindowMetadata, scope: BakeoffFilterScope) -> bool:
         return False
     if scope.source_category is not None and window.source_category != scope.source_category:
         return False
-    if (
-        scope.from_ms is not None
-        and (
-            window.last_timestamp_ms is None
-            or window.last_timestamp_ms < scope.from_ms
-        )
+    if scope.from_ms is not None and (
+        window.last_timestamp_ms is None or window.last_timestamp_ms < scope.from_ms
     ):
         return False
-    if (
-        scope.to_ms is not None
-        and (
-            window.first_timestamp_ms is None
-            or window.first_timestamp_ms > scope.to_ms
-        )
+    if scope.to_ms is not None and (
+        window.first_timestamp_ms is None or window.first_timestamp_ms > scope.to_ms
     ):
         return False
     if scope.participant is not None:
@@ -771,9 +753,7 @@ def build_bakeoff_manifest(
             expected_count=active_window_count,
         )
         judged_ids = {
-            judgment.private_window_id
-            for group in groups
-            for judgment in group.judgments
+            judgment.private_window_id for group in groups for judgment in group.judgments
         }
         missing_judged_count = sum(private_id not in metadata for private_id in judged_ids)
         if missing_judged_count:
@@ -812,17 +792,13 @@ def build_bakeoff_manifest(
         )
         hard_ids = {window.private_window_id for window in selected_hard}
         selected_stable = _stratified_stable_pick(
-            [
-                window
-                for window in unjudged
-                if window.private_window_id not in hard_ids
-            ],
+            [window for window in unjudged if window.private_window_id not in hard_ids],
             limit=distractor_budget - len(selected_hard),
             salt="stable-distractor",
         )
-        sample_sources: dict[
-            str, Literal["judged", "hard_distractor", "stable_distractor"]
-        ] = {private_id: "judged" for private_id in judged_ids}
+        sample_sources: dict[str, Literal["judged", "hard_distractor", "stable_distractor"]] = {
+            private_id: "judged" for private_id in judged_ids
+        }
         sample_sources.update(
             {window.private_window_id: "hard_distractor" for window in selected_hard}
         )
@@ -842,9 +818,7 @@ def build_bakeoff_manifest(
             )
             for private_id in selected_ids
         )
-        corpus_by_id = {
-            window.metadata.private_window_id: window.metadata for window in corpus
-        }
+        corpus_by_id = {window.metadata.private_window_id: window.metadata for window in corpus}
         relevant_filter_mismatches = sum(
             not _matches_filter(corpus_by_id[private_id], group.filter_scope)
             for group in groups
@@ -975,12 +949,8 @@ def _metric_bundle(
         "recall_at_10": float(at_ten["recall_at_k"]),
         "mrr_at_10": float(at_ten["mrr"]),
         "ndcg_at_10": float(at_ten["ndcg_at_k"]),
-        "recall_at_50": float(
-            retrieval_metrics(rankings, relevant_sets, k=50)["recall_at_k"]
-        ),
-        "recall_at_200": float(
-            retrieval_metrics(rankings, relevant_sets, k=200)["recall_at_k"]
-        ),
+        "recall_at_50": float(retrieval_metrics(rankings, relevant_sets, k=50)["recall_at_k"]),
+        "recall_at_200": float(retrieval_metrics(rankings, relevant_sets, k=200)["recall_at_k"]),
         "average_precision_at_200": _average_precision_at_k(
             rankings,
             relevant_sets,
@@ -1024,9 +994,7 @@ def _direct_conflict_grouped_validation(
                 "query_details_persisted": False,
             }
         labels_by_id[judgment.private_window_id] = judgment.label
-    corpus_by_id = {
-        window.metadata.private_window_id: window for window in manifest.corpus
-    }
+    corpus_by_id = {window.metadata.private_window_id: window for window in manifest.corpus}
     examples = tuple(
         DirectConflictTrainingExample(
             private_window_id=private_window_id,
@@ -1105,8 +1073,7 @@ def _evaluate_model(
         dimensions=spec.dimensions,
     )
     corpus_positions = {
-        window.metadata.private_window_id: index
-        for index, window in enumerate(manifest.corpus)
+        window.metadata.private_window_id: index for index, window in enumerate(manifest.corpus)
     }
     rankings: list[list[str]] = []
     relevant_sets: list[frozenset[str]] = []
@@ -1305,12 +1272,8 @@ def evaluate_bakeoff(
     *,
     embedder_factory: BakeoffEmbedderFactory,
 ) -> dict[str, Any]:
-    results = [
-        _evaluate_model(manifest, spec, embedder_factory) for spec in manifest.roster
-    ]
-    control = next(
-        result for result in results if result["model"]["alias"] == CONTROL_MODEL_ALIAS
-    )
+    results = [_evaluate_model(manifest, spec, embedder_factory) for spec in manifest.roster]
+    control = next(result for result in results if result["model"]["alias"] == CONTROL_MODEL_ALIAS)
     comparisons: list[dict[str, Any]] = []
     for result in results:
         alias = str(result["model"]["alias"])

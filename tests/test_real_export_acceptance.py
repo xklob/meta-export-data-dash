@@ -1732,9 +1732,7 @@ def test_current_semantic_evidence_rejects_incomplete_or_forged_payloads() -> No
         },
         held_metric_value=0.9,
     )
-    incumbent_evaluation["evaluator_version"] = (
-        acceptance.PREVIOUS_SEMANTIC_IR_EVALUATOR_VERSION
-    )
+    incumbent_evaluation["evaluator_version"] = acceptance.PREVIOUS_SEMANTIC_IR_EVALUATOR_VERSION
     candidate_evaluation = _spot_semantic_evaluation_fixture(
         acceptance,
         config_id="a" * 64,
