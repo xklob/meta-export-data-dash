@@ -1,5 +1,93 @@
 # Meta Archive Explorer
 
+## Start here: no technical experience needed
+
+Use an AI coding agent installed on your computer, such as **Codex**, **Claude Code**, or another
+coding-agent app or harness of your choice. You can describe what you want in plain English, and
+the agent can read the project instructions, run setup commands, check the results, and help resolve
+errors with the access you grant it.
+
+An installed agent makes this much easier than using a browser-only chat such as ChatGPT web
+without access to your computer. With a browser-only chat, you would need to copy commands into
+your terminal (the app for typing commands), run them yourself, paste the results back into the
+chat, report progress, and repeat. An installed agent can handle that back-and-forth directly.
+
+1. **Install and sign in to your chosen agent.** Follow the official setup instructions for
+   [Codex](https://developers.openai.com/codex/cli) or
+   [Claude Code](https://code.claude.com/docs/en/quickstart), or use an equivalent tool that can
+   work with files and run commands on your computer.
+2. **Choose a project folder.** Open that folder in your agent, or start its terminal session
+   there using its setup guide. The agent can download this project for you.
+3. **Tell the agent where your Facebook export is saved.** Include every part if Facebook split
+   the download into multiple files, and provide your exact Facebook display name. If you do not
+   have an export yet, ask the agent to walk you through getting one.
+4. **Paste the request below into the agent**, replacing the bracketed text with your details:
+
+```text
+Help me set up and use Meta Archive Explorer. I am not a technical user.
+The project is at https://github.com/xklob/meta-export-data-dash.
+Download it into the project folder if it is not already there, then read
+its README and follow the Development setup and Quick start instructions.
+
+My Facebook export files are in: [folder containing all parts of my export]
+My exact Facebook display name is: [your name as it appears on Facebook]
+
+Check what my computer needs, install the required software, and run the
+setup and import commands for me. Preserve my original export files and
+leave optional cloud processing off. Get the basic app working first.
+Explain any steps I need to do myself in plain language.
+When it is ready, give me the exact local browser link and explain how to
+stop the app and start it again later.
+```
+
+Open the link the agent gives you to browse your archive. If something goes wrong, tell the agent
+what you see and ask it to investigate. After the feature overview below, the technical sections
+are there for the agent and for anyone who prefers to run the commands themselves.
+
+## Features
+
+Meta Archive Explorer brings your downloaded Facebook history into a dashboard you open in your
+browser on your own computer. It currently offers:
+
+- **Conversations:** Browse direct and group message histories, filter conversations, and read
+  messages with their reactions and attachments. Jump from search results or media back to the
+  original conversation context.
+- **Media library:** Explore photos, videos, audio, GIFs, stickers, documents, and other files,
+  with previews or playback for supported formats and filters for type, date, size, and availability.
+- **Activity and timeline:** Browse posts, comments, and other exported Facebook activity. View
+  messages and activity together chronologically, or revisit records from a particular calendar day.
+- **People, events, and support:** Explore conversation contacts and any exported friend, follower,
+  request, or block records; browse event history; and read support conversations separately.
+- **Search:** Find words or exact phrases across indexed messages and activity, with links back to
+  the source. Optional local indexing adds searches by meaning and a mode that combines meaning
+  with keyword matches. Processed audio transcripts and extracted attachment text are searchable too.
+- **Starred items:** Save conversations, messages, attachments, media, activity records, events,
+  and contacts to one filterable page for easy access later.
+- **Analytics:** Explore charts of message volume, daily and hourly activity, reply timing, calls,
+  reactions, attachment types, and storage usage, plus a view of conversation-participant connections.
+- **Optional local processing:** Generate audio transcripts, extract text from supported documents,
+  and build thumbnails, video preview images, and audio waveforms. Processing jobs can resume after
+  interruptions, and their progress is visible in the dashboard.
+- **Optional AI analysis:** Explore topic clusters and estimated sentiment, emotion, and toxicity
+  trends, or review conversation passages flagged as possible conflict. These are fallible model
+  estimates for human review; conflict trend charts require additional calibration checks.
+- **Archive organization and checks:** Combine multiple export parts, deduplicate identical files,
+  and retain records of where each item came from. Inspect missing data, unresolved attachments,
+  integrity issues, storage totals, and import or processing progress.
+- **Removal and restore:** Preview a selection, hide it in reversible quarantine, and restore it
+  later. A separate, explicitly confirmed permanent-deletion workflow removes selected content from
+  this local archive workspace.
+- **Local browsing and optional cloud answers:** The app serves only on your computer and keeps
+  cloud processing off by default. If configured and enabled, cloud AI can answer questions with
+  source citations by sending selected archive excerpts to the provider.
+
+What you can see depends on what Facebook included in your export. Missing or incomplete categories
+are labeled, and optional processing must finish before its results are available. Image/video
+recognition, reading text from images (OCR), automatic media tags, and a Memes dashboard are not
+currently implemented.
+
+## About
+
 Meta Archive Explorer is a local-first application for consolidating, validating, searching, and
 browsing Facebook account exports. It turns one or more export chunks into a provenance-preserving
 catalog, a content-addressed blob store, and a responsive localhost-only interface.
@@ -7,20 +95,6 @@ catalog, a content-addressed blob store, and a responsive localhost-only interfa
 ![Archive analytics rendered from synthetic fixture data](web/tests/e2e/stage4.spec.ts-snapshots/stage4-analytics-viewport-linux.png)
 
 _The screenshot above is generated from synthetic test fixtures. No real export data is committed._
-
-## Highlights
-
-- Deterministic multi-chunk consolidation with hashing, deduplication, collision handling, and
-  reconstruction provenance.
-- Conversation, media, activity, people, event, support, timeline, and analytics views that keep
-  incomplete source coverage visible.
-- Keyword, exact, semantic, and hybrid search with source jumps, local model provenance, and
-  optional cited cloud RAG.
-- Local audio transcription, attachment-text extraction, language signals, topic clusters, and
-  deliberately non-authoritative conflict-review aids.
-- Revision-bound starring, reversible quarantine, restore, and explicit hard-purge workflows.
-- A privacy boundary built around loopback-only serving, one-time authentication, CSRF protection,
-  path confinement, owner-only runtime artifacts, and cloud processing that is off by default.
 
 ## Architecture
 
