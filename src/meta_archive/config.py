@@ -21,7 +21,7 @@ class AppSettings(BaseSettings):
 
     archive_root: Path | None = Field(default=None, alias="META_ARCHIVE_ROOT")
     host: str = Field(default="127.0.0.1", alias="META_ARCHIVE_HOST")
-    port: int = Field(default=8765, ge=1, le=65535, alias="META_ARCHIVE_PORT")
+    port: int = Field(default=8766, ge=1, le=65535, alias="META_ARCHIVE_PORT")
     test_mode: bool = Field(default=False, alias="META_ARCHIVE_TEST_MODE")
     embedding_model: str = Field(default="auto", alias="META_ARCHIVE_EMBEDDING_MODEL")
     embedding_batch_size: int = Field(

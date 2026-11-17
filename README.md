@@ -167,7 +167,7 @@ uv run meta-archive warm-analytics --archive-root "$archive_root"
 uv run meta-archive serve --archive-root "$archive_root"
 ```
 
-`serve` prints a one-time URL such as `http://127.0.0.1:8765/auth?token=...`. Open that exact URL
+`serve` prints a one-time URL such as `http://127.0.0.1:8766/auth?token=...`. Open that exact URL
 in a browser; it exchanges the short-lived startup token for an HttpOnly local session. The token
 expires when the server process stops, and the application refuses non-loopback binds.
 
@@ -420,8 +420,8 @@ test "$available_kib" -ge 8126464 || {
   echo "At least 7.75 GiB of available host memory is required for the bounded UI pass." >&2
   exit 1
 }
-if ss -ltnH '( sport = :8765 )' | grep -q .; then
-  echo "Port 8765 is already in use; stop the existing server first." >&2
+if ss -ltnH '( sport = :8766 )' | grep -q .; then
+  echo "Port 8766 is already in use; stop the existing server first." >&2
   exit 1
 fi
 umask 077
@@ -476,18 +476,18 @@ systemd-run --user --wait --collect \
     server_pid=$!
     for ((attempt = 0; attempt < 240; attempt++)); do
       if [[ -s "$ui_root/startup-token" ]] && \
-        ss -ltnH "( sport = :8765 )" | grep -q .; then
+        ss -ltnH "( sport = :8766 )" | grep -q .; then
         break
       fi
       kill -0 "$server_pid"
       sleep 0.25
     done
     [[ -s "$ui_root/startup-token" ]]
-    ss -ltnH "( sport = :8765 )" | grep -q .
+    ss -ltnH "( sport = :8766 )" | grep -q .
 
     sh scripts/run-private-ui-review.sh \
       "$pnpm_bin" --dir web run test:real-ui -- \
-        --base-url http://127.0.0.1:8765 \
+        --base-url http://127.0.0.1:8766 \
         --token-file "$ui_root/startup-token" \
         --output "$ui_root/report.json"
   ' meta-archive-ui "$archive_root" "$ui_root" "$uv_bin" "$pnpm_bin"
@@ -507,8 +507,8 @@ if [[ -e "$ui_root/startup-token" ]]; then
   echo "The bounded UI pass did not remove its startup-token inode." >&2
   ui_postflight_status=1
 fi
-if ss -ltnH '( sport = :8765 )' | grep -q .; then
-  echo "Port 8765 is still in use after the UI pass." >&2
+if ss -ltnH '( sport = :8766 )' | grep -q .; then
+  echo "Port 8766 is still in use after the UI pass." >&2
   ui_postflight_status=1
 fi
 test "$ui_postflight_status" -eq 0

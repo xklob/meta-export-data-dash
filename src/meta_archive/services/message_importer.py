@@ -313,8 +313,10 @@ def _candidate_kind(relative_path: str) -> str | None:
         return None
     if tail == ("support_messages.json",):
         return "support"
+    # Export envelopes sit directly in the category or thread directory. JSON files
+    # below a thread's media directories are attachments, not message containers.
     if tail[0] in THREAD_CATEGORIES and relative_path.casefold().endswith(".json"):
-        return "thread"
+        return "thread" if len(tail) in {2, 3} else "attachment"
     return None
 
 
@@ -2236,7 +2238,24 @@ def import_messages_locked(
                     and source.imported_sha256 == digest
                     and source.json_status == "parsed"
                 )
-                if unchanged:
+                if kind == "attachment":
+                    if source.json_status not in {"attachment", "purged"}:
+                        with Session(engine) as session, session.begin():
+                            _resolve_previous_file_anomalies(session, source.id)
+                            _delete_previous_file_import(session, source.id)
+                            _detach_source_container(session, source.id)
+                            session.execute(
+                                update(SourceFile)
+                                .where(SourceFile.id == source.id)
+                                .values(
+                                    json_status="attachment",
+                                    json_error=None,
+                                    imported_parser_version=None,
+                                    imported_sha256=None,
+                                )
+                            )
+                    summary.skipped_file_count += 1
+                elif unchanged:
                     summary.skipped_file_count += 1
                     if kind == "support":
                         summary.support_container_count += 1

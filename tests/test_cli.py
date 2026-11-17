@@ -377,12 +377,12 @@ def test_serve_cli_wires_explicit_acceptance_read_only_mode(
         "access_token": "a" * 32,
         "acceptance_read_only": True,
         "application": application,
-        "uvicorn": {"host": "127.0.0.1", "port": 8765, "access_log": False},
+        "uvicorn": {"host": "127.0.0.1", "port": 8766, "access_log": False},
     }
     assert "Meta Archive Explorer is starting." in result.output
     assert "Meta Archive Explorer is ready." not in result.output
     assert "Acceptance read-only mode is active" in result.output
-    assert f"http://127.0.0.1:8765/auth?token={'a' * 32}" in result.output
+    assert f"http://127.0.0.1:8766/auth?token={'a' * 32}" in result.output
 
 
 def test_serve_startup_token_file_is_atomic_private_and_suppresses_secret_output(
@@ -457,7 +457,7 @@ def test_serve_startup_token_file_is_atomic_private_and_suppresses_secret_output
         "access_token": token,
         "acceptance_read_only": True,
         "application": application,
-        "uvicorn": {"host": "127.0.0.1", "port": 8765, "access_log": False},
+        "uvicorn": {"host": "127.0.0.1", "port": 8766, "access_log": False},
     }
     assert list(private_parent.glob(".meta-archive-token-*.tmp")) == []
 

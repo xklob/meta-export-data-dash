@@ -29,6 +29,7 @@ from meta_archive.models import (
 from meta_archive.paths import ArchiveLayout
 from meta_archive.services.inventory import scan_archive
 from meta_archive.services.message_importer import import_messages
+from meta_archive.services.verification import verify_catalog
 
 FIXTURES = Path(__file__).parent / "fixtures" / "messages"
 
@@ -697,6 +698,76 @@ def test_support_adapter_uses_seconds_and_rfc6901_pointers(tmp_path: Path) -> No
             assert support_attachment.timestamp_ms == 8_000_000
             assert support_attachment.metadata_json["caption"] == "preserved"
             assert support_attachment.metadata_json["resolution_kind"] == "cross_chunk"
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("previously_misclassified", [False, True])
+def test_json_attachment_is_resolved_without_becoming_a_message_container(
+    tmp_path: Path, previously_misclassified: bool
+) -> None:
+    layout, engine = _catalogued_fixture(tmp_path)
+    try:
+        uri = "your_facebook_activity/messages/archived_threads/alex_example/files/notes.json"
+        attachment = layout.root / "package-b" / uri
+        attachment.parent.mkdir(parents=True)
+        attachment.write_text('{"notes": "An ordinary JSON attachment"}', encoding="utf-8")
+        message_path = (
+            layout.root / "package-a/your_facebook_activity/messages/archived_threads/"
+            "alex_example/message_1.json"
+        )
+        payload = json.loads(message_path.read_text(encoding="utf-8"))
+        payload["messages"][0]["files"] = [{"uri": uri}]
+        message_path.write_text(json.dumps(payload), encoding="utf-8")
+        scan_archive(layout, engine, hash_files=True)
+        if previously_misclassified:
+            with Session(engine) as session, session.begin():
+                source = session.scalar(select(SourceFile).where(SourceFile.relative_path == uri))
+                assert source is not None
+                source.json_status = "unsupported"
+                source.json_error = "missing required envelope field 'title'"
+                session.add(
+                    IntegrityAnomaly(
+                        id="legacy-json-attachment-error",
+                        code="unsupported_message_envelope",
+                        severity="warning",
+                        summary=source.json_error,
+                        source_file_id=source.id,
+                    )
+                )
+
+        first = import_messages(layout, engine)
+        second = import_messages(layout, engine)
+
+        assert first.candidate_file_count == 9
+        assert first.imported_file_count == 8
+        assert first.skipped_file_count == 1
+        assert first.unsupported_file_count == second.unsupported_file_count == 0
+        assert second.imported_file_count == 0
+        assert second.skipped_file_count == first.candidate_file_count
+        with Session(engine) as session:
+            occurrence = session.scalar(
+                select(AttachmentOccurrence).where(AttachmentOccurrence.source_uri == uri)
+            )
+            assert occurrence is not None
+            assert occurrence.availability == "resolved"
+            assert occurrence.resolved_source_file_id is not None
+            source = session.get(SourceFile, occurrence.resolved_source_file_id)
+            assert source is not None
+            assert source.json_status == "attachment"
+            assert source.json_error is None
+            assert not session.scalar(
+                select(IntegrityAnomaly).where(
+                    IntegrityAnomaly.source_file_id == occurrence.resolved_source_file_id,
+                    IntegrityAnomaly.code == "unsupported_message_envelope",
+                    IntegrityAnomaly.resolved.is_(False),
+                )
+            )
+        json_check = next(
+            check for check in verify_catalog(layout, engine) if check["key"] == "json.parse_status"
+        )
+        assert json_check["status"] == "pass"
+        assert json.loads(attachment.read_text()) == {"notes": "An ordinary JSON attachment"}
     finally:
         engine.dispose()
 

@@ -194,7 +194,7 @@ def test_happy_path_binds_report_profile_and_exact_cleanup(tmp_path: Path) -> No
     assert commands[0][:5] == ["uv", "run", "meta-archive", "serve", "--acceptance-read-only"]
     assert commands[1][:4] == ["uv", "run", "python", "scripts/real_export_acceptance.py"]
     assert "production-spot-check" in commands[1]
-    assert health_urls == ["http://127.0.0.1:8765/api/v1/health"]
+    assert health_urls == ["http://127.0.0.1:8766/api/v1/health"]
     assert server.terminated and server.reaped
     assert len(clients) == 1 and clients[0].terminated and clients[0].reaped
     assert not (config.work_directory / "startup-token").exists()
